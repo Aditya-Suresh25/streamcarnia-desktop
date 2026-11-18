@@ -35,6 +35,16 @@ class DesktopSettings:
     cookie_browser: str = "chrome"
     cookie_file: str = ""
     accent: str = "violet"  # theme accent preset, see ui/theme.py
+    clip_count: int = 5
+    clip_layout: str = "blur"
+    caption_style: str = "pop"
+    caption_language: str = ""
+    clip_pan_zoom: bool = False
+    clip_facecam: str = "0.75,0.68,0.25,0.32"
+    clip_channel_name: str = ""
+    clip_subscriber_text: str = ""
+    clip_logo_path: str = ""
+    clip_output_dir: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)

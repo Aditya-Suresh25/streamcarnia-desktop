@@ -14,13 +14,14 @@ from core.queue_manager import QueueManager
 from core.settings_store import SettingsStore
 from ui.pages.history_page import HistoryPage
 from ui.pages.home_page import HomePage
+from ui.pages.auto_clipper_page import AutoClipperPage
 from ui.pages.queue_page import QueuePage
 from ui.pages.settings_page import SettingsPage
 from ui.theme import build_qss
 from ui.widgets.sidebar import Sidebar
 from ui.widgets.toast import ToastHost
 
-PAGE_ORDER = ["home", "queue", "history", "settings"]
+PAGE_ORDER = ["home", "clipper", "queue", "history", "settings"]
 
 
 class MainWindow(QMainWindow):
@@ -65,6 +66,10 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(self.stack, 1)
 
         self.home_page = HomePage(settings_store, self._queue_manager)
+        self.clipper_page = AutoClipperPage(
+            settings_store,
+            lambda: resolve_cookies_path(self._settings_store.get()),
+        )
         self.queue_page = QueuePage(self._queue_manager)
         self._history_page = HistoryPage(history_store)
         self.settings_page = SettingsPage(settings_store)
@@ -74,7 +79,7 @@ class MainWindow(QMainWindow):
         self.settings_page.theme_changed.connect(self._apply_theme)
         self.settings_page.queue_settings_changed.connect(self._queue_manager.refresh_concurrency)
 
-        for page in (self.home_page, self.queue_page, self._history_page, self.settings_page):
+        for page in (self.home_page, self.clipper_page, self.queue_page, self._history_page, self.settings_page):
             self.stack.addWidget(page)
 
         self._toast_host = ToastHost(self)
@@ -92,6 +97,7 @@ class MainWindow(QMainWindow):
         # worker threads wind down cleanly instead of touching UI/signal
         # objects after the window is gone.
         self._queue_manager.cancel_all()
+        self.clipper_page.cancel()
         super().closeEvent(event)
 
     def _on_page_selected(self, key: str) -> None:

@@ -9,7 +9,8 @@ from PySide6.QtWidgets import QButtonGroup, QHBoxLayout, QLabel, QPushButton, QV
 from core.paths import asset_path
 
 NAV_ITEMS = [
-    ("home", "Downloader"),
+    ("home", "Download Stream"),
+    ("clipper", "Auto Clippr"),
     ("queue", "Queue"),
     ("history", "History"),
     ("settings", "Settings"),

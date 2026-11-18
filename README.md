@@ -14,9 +14,10 @@ a plain PySide6 desktop app that calls yt-dlp/FFmpeg directly.
 
 ```
 StreamCarnia.exe
-  -> Paste YouTube URL -> Analyze -> video info + qualities
+  -> Download Stream -> Paste YouTube URL -> Analyze -> video info + qualities
   -> Select quality -> Download -> real-time progress -> FFmpeg merge
   -> Completed -> Open File / Open Folder
+  -> Auto Clippr -> detect highlights -> render captioned shorts
 ```
 
 ## Project layout
@@ -42,8 +43,9 @@ desktop/
 └── ui/                       PySide6 GUI, no downloader logic
     ├── theme.py              Centralized QSS/theme system
     ├── main_window.py
-    ├── pages/                 Downloader / Queue / History / Settings
+    ├── pages/                 Download Stream / Auto Clippr / Queue / History / Settings
     └── widgets/               Sidebar, video info card, quality list, etc.
+desktop/services/clipper/      Local highlight detection/edit/caption pipeline
 ```
 
 ## What's reused vs. new
@@ -143,6 +145,30 @@ output. Per-user data (settings, SQLite history, logs) is written to
 - Cookie/auth support: **file** (existing behavior) and **browser**
   (Brave/Chrome/Edge/Firefox — new for desktop, since the web app can't
   read a user's local browser profile). Cookie contents are never logged.
+
+## Auto Clippr
+
+Auto Clippr is a separate desktop workflow for archived stream/VOD URLs. It
+detects audio-energy highlights, retrieves selected source ranges, creates
+vertical or landscape layouts, transcribes locally, and burns animated
+captions. Choose clip count, layout, caption style/language, optional pan and
+zoom, facecam bounds for stacked layout, and optional logo/name/subscriber
+text for a lower third. Subscriber text is entered by the user and is not
+fetched from the channel. Outputs are saved under
+`<download folder>/StreamCarnia Clips/<job timestamp>/` with a job log,
+candidate metadata, clip metadata, caption sidecars, and intermediate files.
+
+This first version supports archived VODs; it does not record active streams.
+Auto Clippr requires the packages in `desktop/requirements.txt`. The first
+transcription run downloads the Whisper `small` model into the user's model
+cache, so it needs internet access and additional disk space. Transcription
+and video rendering can use substantial CPU, memory, and time. FFmpeg must
+include the `ass` filter (`libass`). Missing clipping dependencies are
+reported in Auto Clippr without changing regular stream downloads.
+
+The `desktop/services/clipper/` scripts are the local application adaptation
+of the user-provided `livestream-clipper.skill` pipeline; the skill archive is
+not loaded at runtime.
 
 ## Desktop-specific UX
 

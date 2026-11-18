@@ -205,6 +205,21 @@ def build_qss(accent_name: str = "violet") -> str:
         outline: none;
         padding: 4px;
     }}
+    QCheckBox {{
+        color: {text_dim};
+        spacing: 9px;
+    }}
+    QCheckBox::indicator {{
+        width: 16px;
+        height: 16px;
+        background-color: {panel};
+        border: 1px solid {border};
+        border-radius: 4px;
+    }}
+    QCheckBox::indicator:checked {{
+        background-color: {accent};
+        border-color: {accent_hover};
+    }}
 
     /* --- Buttons --- */
     QPushButton#PrimaryButton {{

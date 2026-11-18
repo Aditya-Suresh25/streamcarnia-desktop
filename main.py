@@ -11,9 +11,51 @@ localhost involved.
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+
+
+def _dispatch_child_process() -> bool:
+    """Run packaged helper tools without starting a second GUI instance."""
+    if len(sys.argv) < 2:
+        return False
+    mode = sys.argv[1]
+    if mode == "--run-clipper" and len(sys.argv) >= 3:
+        _restore_child_stdio()
+        script, *args = sys.argv[2:]
+        script_path = Path(script).resolve()
+        sys.path.insert(0, str(script_path.parent))
+        sys.argv = [str(script_path), *args]
+        namespace = {
+            "__name__": "__main__", "__file__": str(script_path),
+            "__package__": None, "__cached__": None,
+        }
+        source = script_path.read_text(encoding="utf-8-sig")
+        exec(compile(source, str(script_path), "exec"), namespace)
+        return True
+    if mode == "--run-ytdlp":
+        _restore_child_stdio()
+        from yt_dlp import main as ytdlp_main
+        ytdlp_main(sys.argv[2:])
+        return True
+    return False
+
+
+def _restore_child_stdio() -> None:
+    """PyInstaller windowed builds set Python's stdout/stderr to None."""
+    for name, fd in (("stdout", 1), ("stderr", 2)):
+        if getattr(sys, name, None) is not None:
+            continue
+        try:
+            setattr(sys, name, os.fdopen(fd, "w", encoding="utf-8", errors="replace", buffering=1))
+        except OSError:
+            setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))
+
+
+if _dispatch_child_process():
+    raise SystemExit(0)
 
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import QApplication
@@ -58,7 +100,9 @@ def _load_bundled_fonts() -> None:
         return
     logger = logging.getLogger("fonts")
     for ttf in sorted(fonts_dir.glob("*.ttf")):
-        font_id = QFontDatabase.addApplicationFont(str(ttf))
+        # Loading from bytes is reliable in PyInstaller's one-folder build,
+        # where Qt may reject a font by its extracted filesystem path.
+        font_id = QFontDatabase.addApplicationFontFromData(ttf.read_bytes())
         if font_id == -1:
             logger.warning("Failed to load bundled font: %s", ttf.name)
 
