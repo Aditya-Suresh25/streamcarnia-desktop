@@ -30,8 +30,8 @@ class LiveClipperConfig:
             raise ValueError("Maximum clips per stream must be between 1 and 100")
         if not 0.1 <= float(self.threshold) <= 20.0:
             raise ValueError("Detection threshold must be between 0.1 and 20")
-        if self.layout not in {"blur", "center", "stack", "landscape"}:
-            raise ValueError("Unsupported clip layout")
+        if self.layout not in {"blur", "center", "stack"}:
+            raise ValueError("Live clips must use a portrait layout: blur, center, or stack")
         if not self.caption_style.strip():
             raise ValueError("Caption style cannot be empty")
         for value in (self.schedule_start, self.schedule_end):

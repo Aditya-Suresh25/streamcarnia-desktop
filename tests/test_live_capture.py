@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from services.live_clipper.capture import LiveSegmentRecorder, RollingSegmentBuffer, Segment
 
@@ -50,7 +51,8 @@ class LiveCaptureTests(unittest.TestCase):
                 lambda: stop["value"], resolver=lambda _url: next(resolutions), popen=popen,
                 sleep=lambda _delay: None,
             )
-            recorder.run()
+            with patch.object(recorder, "_probe_duration", return_value=300.0):
+                recorder.run()
             segments = [event for event in events if event["type"] == "segment_ready"]
             self.assertEqual(len(segments), 4)
             self.assertEqual([event["sequence"] for event in segments], [1, 2, 3, 4])

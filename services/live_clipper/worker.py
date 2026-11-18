@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 from .capture import LiveSegmentRecorder
+from .orchestrator import LiveAutoClipper
 
 
 def run_worker(config_path: str) -> int:
@@ -22,13 +23,19 @@ def run_worker(config_path: str) -> int:
 
     emit({"type": "started", "stream_url": config.get("stream_url", "")})
     if config.get("stream_url") and config.get("ffmpeg_path"):
-        recorder = LiveSegmentRecorder(
-            config["stream_url"], Path(config.get("output_dir", config_path.parent / "segments")),
+        output_dir = Path(config.get("output_dir", config_path.parent / "output"))
+        buffer_dir = Path(config.get("buffer_dir", output_dir / "buffer"))
+        live = LiveAutoClipper(config=config, ffmpeg=config["ffmpeg_path"],
+                               output_dir=output_dir, emit=emit)
+        recorder = LiveSegmentRecorder(config["stream_url"], buffer_dir,
             config["ffmpeg_path"], emit, stop_path.exists,
             segment_seconds=int(config.get("segment_seconds", 300)),
             retention_seconds=int(config.get("retention_seconds", 1800)),
-        )
-        recorder.run()
+            on_segment=live.on_segment)
+        try:
+            recorder.run()
+        finally:
+            live.finish(recorder.buffer)
         return 0
     while True:
         if stop_path.exists():

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import time
 from dataclasses import dataclass
@@ -93,7 +94,7 @@ class LiveSegmentRecorder:
                  stop_requested: Callable[[], bool], resolver=resolve_live_media,
                  popen=subprocess.Popen, segment_seconds: int = 300,
                  retention_seconds: int = 1800, reconnect_delay: float = 5.0,
-                 sleep: Callable[[float], None] = time.sleep):
+                 sleep: Callable[[float], None] = time.sleep, on_segment: Callable | None = None):
         self.url = url
         self.root = Path(output_dir)
         self.root.mkdir(parents=True, exist_ok=True)
@@ -105,11 +106,11 @@ class LiveSegmentRecorder:
         self.segment_seconds = int(segment_seconds)
         self.reconnect_delay = reconnect_delay
         self.sleep = sleep
+        self.on_segment = on_segment
         self.buffer = RollingSegmentBuffer(self.root, retention_seconds)
         self._known: set[Path] = set()
         self._sequence = 0
-        self._ever_connected = False
-        self._last_live_at = 0.0
+        self._timeline_seconds = 0.0
 
     def run(self) -> None:
         while not self.stop_requested():
@@ -119,8 +120,6 @@ class LiveSegmentRecorder:
                     self._emit_completed()
                     self.emit({"type": "stream_ended"})
                     return
-                self._ever_connected = True
-                self._last_live_at = time.monotonic()
                 self.emit({"type": "connected" if not self._known else "reconnected"})
                 self._record_connection(media_url)
             except Exception as exc:
@@ -164,10 +163,25 @@ class LiveSegmentRecorder:
                 continue
             self._known.add(path)
             self._sequence += 1
+            duration = self._probe_duration(path)
             segment = Segment(path=path, sequence=self._sequence,
-                              started_at=path.stat().st_mtime - self.segment_seconds,
-                              duration=float(self.segment_seconds))
+                              started_at=self._timeline_seconds,
+                              duration=duration)
+            self._timeline_seconds += duration
             removed = self.buffer.add(segment)
             self.emit({"type": "segment_ready", "path": str(path), "sequence": segment.sequence,
                        "duration": segment.duration, "buffer_segments": len(self.buffer.segments),
                        "pruned": [str(item) for item in removed]})
+            if self.on_segment:
+                self.on_segment(segment, self.buffer)
+
+    def _probe_duration(self, path: Path) -> float:
+        result = subprocess.run([self.ffmpeg, "-hide_banner", "-i", str(path), "-t", "0",
+                                 "-f", "null", "-"], capture_output=True, text=True,
+                                check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                                if os.name == "nt" else 0)
+        match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", result.stderr)
+        if not match:
+            return float(self.segment_seconds)
+        hours, minutes, seconds = match.groups()
+        return max(0.001, int(hours) * 3600 + int(minutes) * 60 + float(seconds))
