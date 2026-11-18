@@ -22,6 +22,7 @@ class LiveClipperConfig:
     approve_before_upload: bool = True
     schedule_start: str = "09:00"
     schedule_end: str = "21:00"
+    oauth_client_file: str = ""
 
     def validated(self) -> "LiveClipperConfig":
         if not 20 <= int(self.clip_length_seconds) <= 60:

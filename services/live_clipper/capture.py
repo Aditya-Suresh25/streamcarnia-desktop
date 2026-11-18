@@ -16,6 +16,7 @@ class Segment:
     sequence: int
     started_at: float
     duration: float = 300.0
+    wall_started_at: float | None = None
 
 
 class RollingSegmentBuffer:
@@ -94,7 +95,8 @@ class LiveSegmentRecorder:
                  stop_requested: Callable[[], bool], resolver=resolve_live_media,
                  popen=subprocess.Popen, segment_seconds: int = 300,
                  retention_seconds: int = 1800, reconnect_delay: float = 5.0,
-                 sleep: Callable[[float], None] = time.sleep, on_segment: Callable | None = None):
+                 sleep: Callable[[float], None] = time.sleep, on_segment: Callable | None = None,
+                 on_tick: Callable[[], None] | None = None):
         self.url = url
         self.root = Path(output_dir)
         self.root.mkdir(parents=True, exist_ok=True)
@@ -107,6 +109,7 @@ class LiveSegmentRecorder:
         self.reconnect_delay = reconnect_delay
         self.sleep = sleep
         self.on_segment = on_segment
+        self.on_tick = on_tick
         self.buffer = RollingSegmentBuffer(self.root, retention_seconds)
         self._known: set[Path] = set()
         self._sequence = 0
@@ -146,6 +149,8 @@ class LiveSegmentRecorder:
         process = self.popen(command, **kwargs)
         while process.poll() is None and not self.stop_requested():
             self._emit_completed()
+            if self.on_tick:
+                self.on_tick()
             self.sleep(0.5)
         if process.poll() is None:
             process.terminate()
@@ -166,7 +171,8 @@ class LiveSegmentRecorder:
             duration = self._probe_duration(path)
             segment = Segment(path=path, sequence=self._sequence,
                               started_at=self._timeline_seconds,
-                              duration=duration)
+                              duration=duration,
+                              wall_started_at=path.stat().st_mtime - duration)
             self._timeline_seconds += duration
             removed = self.buffer.add(segment)
             self.emit({"type": "segment_ready", "path": str(path), "sequence": segment.sequence,

@@ -47,6 +47,14 @@ for package in ("faster_whisper", "ctranslate2"):
     binaries += pkg_bins
     hiddenimports += pkg_hidden
 
+# Live Auto Clipper integrations remain unused until its feature flag is on,
+# but their SDK modules are included in the Windows package for enabled users.
+for package in ("google.genai", "googleapiclient", "google_auth_oauthlib", "keyring"):
+    pkg_datas, pkg_bins, pkg_hidden = collect_all(package)
+    datas += pkg_datas
+    binaries += pkg_bins
+    hiddenimports += pkg_hidden
+
 a = Analysis(
     [str(DESKTOP_DIR / "main.py")],
     pathex=[str(DESKTOP_DIR), str(PROJECT_ROOT)],

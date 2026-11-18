@@ -27,13 +27,17 @@ class LiveProcessController:
     def start(self, config: dict) -> None:
         if self.running:
             raise RuntimeError("A live monitor is already running")
+        if not config.get("enabled", config.get("live_clipper.enabled", False)):
+            raise RuntimeError("Live Auto Clipper is disabled in Settings")
         runtime = self._runtime_root / str(uuid.uuid4())
         runtime.mkdir(parents=True, exist_ok=True)
         self._runtime = runtime
         self._event_path = runtime / "events.jsonl"
         self._event_offset = 0
         payload = dict(config)
-        payload.update(event_path=str(self._event_path), stop_path=str(runtime / "stop"))
+        payload.update(event_path=str(self._event_path), stop_path=str(runtime / "stop"),
+                       command_dir=str(runtime / "commands"))
+        Path(payload["command_dir"]).mkdir(parents=True, exist_ok=True)
         config_path = runtime / "config.json"
         config_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         if getattr(sys, "frozen", False):
@@ -47,9 +51,16 @@ class LiveProcessController:
             kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
         self._process = subprocess.Popen(command, **kwargs)
 
-    def send(self, command: str) -> None:
+    def send(self, command) -> None:
         if command == "stop" and self._runtime:
             (self._runtime / "stop").touch()
+        elif isinstance(command, dict) and self._runtime:
+            command_dir = self._runtime / "commands"
+            command_dir.mkdir(exist_ok=True)
+            path = command_dir / f"{uuid.uuid4()}.json"
+            temporary = path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(command, ensure_ascii=False), encoding="utf-8")
+            temporary.replace(path)
 
     def poll(self) -> list[dict]:
         events = []

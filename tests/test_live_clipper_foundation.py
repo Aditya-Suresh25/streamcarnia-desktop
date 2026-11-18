@@ -48,7 +48,7 @@ class LiveFoundationTests(unittest.TestCase):
     def test_supervised_live_worker_starts_and_stops_outside_ui_process(self):
         with tempfile.TemporaryDirectory() as td:
             supervisor = LiveProcessController(Path(td))
-            supervisor.start({"stream_url": "https://example.test/live"})
+            supervisor.start({"enabled": True, "stream_url": "https://example.test/live"})
             deadline = time.monotonic() + 8
             events = []
             while time.monotonic() < deadline and not any(e["type"] == "started" for e in events):

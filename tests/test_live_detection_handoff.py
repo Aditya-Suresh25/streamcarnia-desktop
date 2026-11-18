@@ -9,6 +9,7 @@ from services.live_clipper.capture import RollingSegmentBuffer, Segment
 from services.live_clipper.detector import IncrementalHighlightDetector
 from services.live_clipper.handoff import VodHandoff, clip_window
 from services.live_clipper.orchestrator import LiveAutoClipper
+from services.live_clipper.store import LiveJobStore
 
 
 class LiveDetectionTests(unittest.TestCase):
@@ -57,7 +58,10 @@ class LiveDetectionTests(unittest.TestCase):
             energies = np.concatenate([np.full(120, -30.0), np.array([-5.0])])
             service = LiveAutoClipper(config={"threshold": 2, "max_clips_per_stream": 3,
                 "clip_length_seconds": 20}, ffmpeg="ffmpeg", output_dir=Path(td), emit=events.append,
-                energy_provider=lambda path, ffmpeg: energies, handoff_factory=FakeHandoff)
+                energy_provider=lambda path, ffmpeg: energies, handoff_factory=FakeHandoff,
+                store=LiveJobStore(Path(td) / "jobs.sqlite3"),
+                metadata_factory=lambda transcript, name, key, client_factory=None: {
+                    "title": "Fallback", "description": "", "hashtags": ["#Shorts"], "fallback": True})
             service.on_segment(segment, buffer)
             self.assertIn("detected", [event["type"] for event in events])
             self.assertIn("rendered", [event["type"] for event in events])
