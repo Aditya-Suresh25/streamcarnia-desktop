@@ -5,6 +5,8 @@ import json
 import time
 from pathlib import Path
 
+from .capture import LiveSegmentRecorder
+
 
 def run_worker(config_path: str) -> int:
     """Keep worker lifetime out of the UI process; append machine-readable events."""
@@ -19,6 +21,15 @@ def run_worker(config_path: str) -> int:
             stream.flush()
 
     emit({"type": "started", "stream_url": config.get("stream_url", "")})
+    if config.get("stream_url") and config.get("ffmpeg_path"):
+        recorder = LiveSegmentRecorder(
+            config["stream_url"], Path(config.get("output_dir", config_path.parent / "segments")),
+            config["ffmpeg_path"], emit, stop_path.exists,
+            segment_seconds=int(config.get("segment_seconds", 300)),
+            retention_seconds=int(config.get("retention_seconds", 1800)),
+        )
+        recorder.run()
+        return 0
     while True:
         if stop_path.exists():
             emit({"type": "stopped"})
