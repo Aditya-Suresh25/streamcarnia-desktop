@@ -3,10 +3,13 @@ and FFmpeg/yt-dlp status -- ported from the web app's Settings.jsx /
 SettingsPage.jsx."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import yt_dlp
 from PySide6.QtCore import Signal
+from PySide6.QtCore import QThreadPool
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
     QScrollArea, QSpinBox, QVBoxLayout, QWidget,
 )
 
@@ -17,9 +20,11 @@ from core.settings_store import (
     SUPPORTED_COOKIE_BROWSERS, SettingsStore,
 )
 from services.live_clipper.config import LiveClipperSettings
+from services.live_clipper.secrets import CredentialVault
 from ui.effects import apply_card_shadow
 from ui.theme import ACCENT_PRESETS, palette
 from ui.widgets.buttons import GhostButton, PrimaryButton
+from workers.oauth_worker import YouTubeOAuthWorker
 
 APP_VERSION = "1.0.0"
 COPYRIGHT_LINE = "\u00a9 Aditya Suresh. All rights reserved."
@@ -64,11 +69,13 @@ def _section(title: str) -> tuple[QFrame, QVBoxLayout, QFrame]:
 class SettingsPage(QWidget):
     theme_changed = Signal(str)
     queue_settings_changed = Signal()
+    live_settings_changed = Signal(bool)
 
     def __init__(self, settings_store: SettingsStore, parent=None):
         super().__init__(parent)
         self._settings_store = settings_store
         self._live_settings = LiveClipperSettings()
+        self._oauth_pool = QThreadPool(self)
         self._eyebrow_marks: list[QFrame] = []
 
         scroll = QScrollArea(self)
@@ -230,6 +237,38 @@ class SettingsPage(QWidget):
         note.setObjectName("Faint")
         note.setWordWrap(True)
         layout.addWidget(note)
+        layout.addWidget(_divider())
+        layout.addWidget(_field_label("Gemini API key"))
+        key_row = QHBoxLayout()
+        self.gemini_key_input = QLineEdit()
+        self.gemini_key_input.setEchoMode(QLineEdit.Password)
+        self.gemini_key_input.setPlaceholderText("Stored in the Windows credential store")
+        key_row.addWidget(self.gemini_key_input, 1)
+        save_key = GhostButton("Save key")
+        save_key.clicked.connect(self._save_gemini_key)
+        key_row.addWidget(save_key)
+        remove_key = GhostButton("Remove key")
+        remove_key.clicked.connect(self._remove_gemini_key)
+        key_row.addWidget(remove_key)
+        layout.addLayout(key_row)
+        self.live_credential_status = QLabel("")
+        self.live_credential_status.setObjectName("Faint")
+        layout.addWidget(self.live_credential_status)
+        layout.addWidget(_field_label("Google OAuth client secrets JSON"))
+        oauth_row = QHBoxLayout()
+        self.oauth_file_input = QLineEdit()
+        self.oauth_file_input.setPlaceholderText("Choose your desktop OAuth client file")
+        oauth_row.addWidget(self.oauth_file_input, 1)
+        browse_oauth = GhostButton("Browse…")
+        browse_oauth.clicked.connect(self._pick_oauth_file)
+        oauth_row.addWidget(browse_oauth)
+        self.connect_youtube_btn = GhostButton("Connect YouTube")
+        self.connect_youtube_btn.clicked.connect(self._connect_youtube)
+        oauth_row.addWidget(self.connect_youtube_btn)
+        layout.addLayout(oauth_row)
+        self.oauth_status = QLabel("OAuth tokens are stored in the Windows credential store.")
+        self.oauth_status.setObjectName("Faint")
+        layout.addWidget(self.oauth_status)
         save_btn = PrimaryButton("Save Live Settings")
         save_btn.clicked.connect(self._save_live_settings)
         layout.addWidget(save_btn)
@@ -297,6 +336,49 @@ class SettingsPage(QWidget):
         if path:
             self.cookie_file_input.setText(path)
 
+    def _pick_oauth_file(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Choose Google OAuth client file", "",
+                                               "JSON files (*.json);;All files (*)")
+        if path:
+            self.oauth_file_input.setText(path)
+            self._live_settings.update(oauth_client_file=path)
+
+    def _save_gemini_key(self) -> None:
+        try:
+            CredentialVault().set("gemini.api_key", self.gemini_key_input.text().strip())
+            self.gemini_key_input.clear()
+            self.live_credential_status.setText("Gemini API key saved securely.")
+        except Exception as exc:
+            QMessageBox.warning(self, "Could not save key", str(exc))
+
+    def _remove_gemini_key(self) -> None:
+        try:
+            CredentialVault().delete("gemini.api_key")
+            self.live_credential_status.setText("Gemini API key removed.")
+        except Exception as exc:
+            QMessageBox.warning(self, "Could not remove key", str(exc))
+
+    def _connect_youtube(self) -> None:
+        client_file = self.oauth_file_input.text().strip()
+        if not client_file or not Path(client_file).is_file():
+            QMessageBox.information(self, "OAuth client file required", "Choose your Google desktop OAuth client JSON first.")
+            return
+        self._live_settings.update(oauth_client_file=client_file)
+        self.connect_youtube_btn.setEnabled(False)
+        self.oauth_status.setText("Opening Google authorization in your browser…")
+        worker = YouTubeOAuthWorker(client_file)
+        worker.signals.completed.connect(self._oauth_connected)
+        worker.signals.failed.connect(self._oauth_failed)
+        self._oauth_pool.start(worker)
+
+    def _oauth_connected(self) -> None:
+        self.connect_youtube_btn.setEnabled(True)
+        self.oauth_status.setText("YouTube connected. OAuth tokens are stored securely.")
+
+    def _oauth_failed(self, error: str) -> None:
+        self.connect_youtube_btn.setEnabled(True)
+        self.oauth_status.setText(f"YouTube connection failed: {error}")
+
     def _on_cookie_mode_changed(self, index: int) -> None:
         self.browser_row.setVisible(index == 1)
         self.cookie_file_row.setVisible(index == 2)
@@ -322,7 +404,17 @@ class SettingsPage(QWidget):
         if s.cookie_browser.lower() in SUPPORTED_COOKIE_BROWSERS:
             self.browser_combo.setCurrentText(s.cookie_browser.title())
         self.cookie_file_input.setText(s.cookie_file)
-        self.live_enabled.setChecked(self._live_settings.get().enabled)
+        live_config = self._live_settings.get()
+        self.live_enabled.setChecked(live_config.enabled)
+        self.oauth_file_input.setText(live_config.oauth_client_file)
+        try:
+            connected = bool(CredentialVault().get("youtube.oauth"))
+            has_key = bool(CredentialVault().get("gemini.api_key"))
+            self.live_credential_status.setText("Gemini API key is saved securely." if has_key else "No Gemini API key saved.")
+            if connected:
+                self.oauth_status.setText("YouTube is connected. OAuth tokens are stored securely.")
+        except Exception:
+            self.live_credential_status.setText("Secure credential storage is not available.")
 
         self.accent_combo.blockSignals(True)
         self.accent_combo.setCurrentText(s.accent.title())
@@ -342,4 +434,10 @@ class SettingsPage(QWidget):
         self.queue_settings_changed.emit()
 
     def _save_live_settings(self) -> None:
-        self._live_settings.update(enabled=self.live_enabled.isChecked())
+        try:
+            config = self._live_settings.update(enabled=self.live_enabled.isChecked(),
+                                                 oauth_client_file=self.oauth_file_input.text().strip())
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid Live Auto Clipper settings", str(exc))
+            return
+        self.live_settings_changed.emit(config.enabled)

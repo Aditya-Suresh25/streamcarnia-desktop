@@ -22,7 +22,7 @@ class LiveProcessController:
 
     @property
     def running(self) -> bool:
-        return bool(self._process and self._process.is_alive())
+        return bool(self._process and self._process.poll() is None)
 
     def start(self, config: dict) -> None:
         if self.running:
@@ -62,6 +62,9 @@ class LiveProcessController:
             temporary.write_text(json.dumps(command, ensure_ascii=False), encoding="utf-8")
             temporary.replace(path)
 
+    def request_stop(self) -> None:
+        self.send("stop")
+
     def poll(self) -> list[dict]:
         events = []
         if self._event_path is None or not self._event_path.exists():
@@ -83,13 +86,18 @@ class LiveProcessController:
         if self._process is None:
             return
         if self._process.poll() is None:
-            self.send("stop")
+            self.request_stop()
             try:
                 self._process.wait(timeout)
             except subprocess.TimeoutExpired:
-                self._process.terminate()
+                if os.name == "nt":
+                    subprocess.run(["taskkill", "/PID", str(self._process.pid), "/T", "/F"],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                else:
+                    self._process.terminate()
                 try:
-                    self._process.wait(1)
+                    self._process.wait(3)
                 except subprocess.TimeoutExpired:
                     self._process.kill()
         self._process = None

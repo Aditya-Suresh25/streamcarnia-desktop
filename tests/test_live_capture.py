@@ -58,6 +58,7 @@ class LiveCaptureTests(unittest.TestCase):
             self.assertEqual([event["sequence"] for event in segments], [1, 2, 3, 4])
             self.assertIn("reconnected", [event["type"] for event in events])
             self.assertIn("stream_ended", [event["type"] for event in events])
+            self.assertTrue(any(event.get("title") == "Live stream" for event in events))
 
     def test_stop_during_retry_exits_cleanly(self):
         with tempfile.TemporaryDirectory() as td:
@@ -74,6 +75,24 @@ class LiveCaptureTests(unittest.TestCase):
             )
             recorder.run()
             self.assertIn("capture_stopped", [event["type"] for event in events])
+
+    def test_clear_removes_unpinned_buffer_only(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            buffer = RollingSegmentBuffer(root, 600)
+            paths = []
+            for number in (1, 2):
+                path = root / f"clear_{number}.ts"
+                path.write_bytes(b"segment")
+                paths.append(path)
+                buffer.add(Segment(path, number, number * 300))
+            buffer.pin("queued", [1])
+            buffer.clear()
+            self.assertTrue(paths[0].exists())
+            self.assertFalse(paths[1].exists())
+            buffer.unpin("queued")
+            buffer.clear()
+            self.assertFalse(paths[0].exists())
 
 
 if __name__ == "__main__":

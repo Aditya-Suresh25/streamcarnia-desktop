@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 import uuid
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -53,7 +54,9 @@ class LiveAutoClipper:
         self.pending: list[PendingHighlight] = []
         self.completed = 0
         self.failed = 0
+        self.fatal_error: str | None = None
         self._clip_started: dict[str, float] = {}
+        self._progress_state: dict[str, tuple[str, float]] = {}
 
     def on_segment(self, segment: Segment, buffer: RollingSegmentBuffer) -> None:
         try:
@@ -71,11 +74,16 @@ class LiveAutoClipper:
                 pending = PendingHighlight(key, highlight.trigger_at, highlight.score,
                                            highlight.trigger_at + length - 20)
                 self.pending.append(pending)
-                job_id = self.store.create(self.config.get("stream_url", ""), {
-                    "trigger_at": highlight.trigger_at, "score": highlight.score,
-                    "audio_score": highlight.audio_score, "chat_score": highlight.chat_score,
-                    "clip_length_seconds": length, "state": "detected",
-                })
+                try:
+                    job_id = self.store.create(self.config.get("stream_url", ""), {
+                        "trigger_at": highlight.trigger_at, "score": highlight.score,
+                        "audio_score": highlight.audio_score, "chat_score": highlight.chat_score,
+                        "clip_length_seconds": length, "state": "detected",
+                    })
+                except (sqlite3.Error, OSError) as exc:
+                    self.fatal_error = f"Live job storage failed: {exc}"
+                    self.emit({"type": "storage_error", "message": self.fatal_error})
+                    raise
                 pending.key = job_id
                 needed_start = highlight.trigger_at - 20
                 sequences = [item.sequence for item in buffer.segments
@@ -88,6 +96,8 @@ class LiveAutoClipper:
             self._refresh_pins(buffer)
             self._render_ready(buffer, segment.started_at + segment.duration)
         except Exception as exc:
+            if self.fatal_error:
+                raise
             self.emit({"type": "analysis_error", "sequence": segment.sequence,
                        "stage": "audio analysis", "message": str(exc)})
 
@@ -133,12 +143,17 @@ class LiveAutoClipper:
                 if not self.config.get("approve_before_upload", True):
                     self.approve(pending.key)
             except Exception as exc:
+                if isinstance(exc, (sqlite3.Error, OSError)):
+                    self.fatal_error = f"Live job storage failed: {exc}"
+                    self.emit({"type": "storage_error", "message": self.fatal_error})
+                    raise
                 self.failed += 1
                 self.emit({"type": "clip_failed", "id": pending.key, "clip": clip_number,
                            "stage": "render", "message": str(exc), "failed": self.failed})
             finally:
                 buffer.unpin(pending.key)
                 self._clip_started.pop(pending.key, None)
+                self._progress_state.pop(pending.key, None)
 
     def _make_metadata(self, final: Path, trigger_at: float) -> dict:
         transcript = ""
@@ -191,7 +206,10 @@ class LiveAutoClipper:
                 if not vault.get("youtube.oauth"):
                     continue
                 uploader = self._make_uploader(vault)
-                UploadScheduler(self.store, uploader).upload_due(job["id"])
+                video_id = UploadScheduler(self.store, uploader).upload_due(job["id"])
+                if video_id:
+                    self.emit({"type": "uploaded", "id": job["id"],
+                               "youtube_video_id": video_id, "state": "uploaded"})
             except RuntimeError:
                 pass
             except Exception as exc:
@@ -209,12 +227,26 @@ class LiveAutoClipper:
         return YouTubeUploader(service)
 
     def _forward_progress(self, event: dict, key: str, clip_number: int, total: int) -> None:
-        fractions = {"source": 0.02, "ready": 0.08, "edit": 0.38, "transcribe": 0.63,
-                     "romanize": 0.72, "burn": 0.90, "done": 1.0, "clip_failed": 1.0}
-        fraction = fractions.get(event.get("stage", ""), 0.1)
-        started = self._clip_started.get(key, self.clock())
-        elapsed = max(0.0, self.clock() - started)
+        stage = event.get("stage", "working")
+        now = self.clock()
+        starts = {"edit": 0.08, "transcribe": 0.38, "romanize": 0.63, "burn": 0.72}
+        ends = {"edit": 0.38, "transcribe": 0.63, "romanize": 0.72, "burn": 0.90}
+        estimates = {"edit": 45.0, "transcribe": 180.0, "romanize": 12.0, "burn": 90.0}
+        if event.get("heartbeat") and stage in starts:
+            previous = self._progress_state.get(key)
+            stage_started = previous[1] if previous and previous[0] == stage else now
+            elapsed_stage = max(0.0, now - stage_started)
+            fraction = starts[stage] + (ends[stage] - starts[stage]) * min(
+                0.97, elapsed_stage / estimates[stage])
+        else:
+            self._progress_state[key] = (stage, now)
+            fixed = {"source": 0.02, "ready": 0.08, "done": 1.0, "clip_failed": 1.0}
+            fraction = starts.get(stage, fixed.get(stage, 0.1))
+            if stage in starts:
+                fraction = starts[stage]
+        started = self._clip_started.get(key, now)
+        elapsed = max(0.0, now - started)
         eta = int(elapsed * (1 - fraction) / max(fraction, 0.01)) if fraction > 0.02 else None
         self.emit({"type": "clip_progress", "id": key, "clip": clip_number, "total": total,
-                   "stage": event.get("stage", "working"), "percent": int(fraction * 100),
+                   "stage": stage, "percent": int(fraction * 100),
                    "eta_seconds": eta})

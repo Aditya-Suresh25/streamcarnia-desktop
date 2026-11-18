@@ -23,6 +23,7 @@ class LiveClipperConfig:
     schedule_start: str = "09:00"
     schedule_end: str = "21:00"
     oauth_client_file: str = ""
+    output_dir: str = ""
 
     def validated(self) -> "LiveClipperConfig":
         if not 20 <= int(self.clip_length_seconds) <= 60:
@@ -33,10 +34,12 @@ class LiveClipperConfig:
             raise ValueError("Detection threshold must be between 0.1 and 20")
         if self.layout not in {"blur", "center", "stack"}:
             raise ValueError("Live clips must use a portrait layout: blur, center, or stack")
-        if not self.caption_style.strip():
-            raise ValueError("Caption style cannot be empty")
+        if self.caption_style not in {"pop", "bounce", "word", "karaoke"}:
+            raise ValueError("Unsupported animated caption style")
         for value in (self.schedule_start, self.schedule_end):
             _parse_clock(value)
+        if _parse_clock(self.schedule_end) <= _parse_clock(self.schedule_start):
+            raise ValueError("The publishing window must end after it starts on the same day")
         return self
 
 

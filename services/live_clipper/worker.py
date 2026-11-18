@@ -58,10 +58,10 @@ def run_worker(config_path: str) -> int:
                     emit({"type": "control_error", "message": str(exc)})
                 finally:
                     command_path.unlink(missing_ok=True)
-            return stop_path.exists()
+            return stop_path.exists() or live.fatal_error is not None
 
         recorder = LiveSegmentRecorder(config["stream_url"], buffer_dir,
-            config["ffmpeg_path"], emit, poll_control,
+            config["ffmpeg_path"], lambda event: _forward_capture_event(event, config, live, emit), poll_control,
             segment_seconds=int(config.get("segment_seconds", 300)),
             retention_seconds=int(config.get("retention_seconds", 1800)),
             on_segment=live.on_segment, on_tick=live.tick)
@@ -71,7 +71,16 @@ def run_worker(config_path: str) -> int:
             chat_thread_stop.set()
             if chat_thread:
                 chat_thread.join(timeout=2)
-            live.finish(recorder.buffer)
+            if not live.fatal_error:
+                live.finish(recorder.buffer)
+                recorder.buffer.clear()
+        if live.fatal_error:
+            return 2
+        # Keep scheduled uploads and approval commands alive after the source ends.
+        while not poll_control():
+            live.tick()
+            time.sleep(0.5)
+        emit({"type": "stopped"})
         return 0
     emit({"type": "error", "stage": "configuration", "message": "A stream URL and FFmpeg path are required"})
     return 2
@@ -104,8 +113,10 @@ def _poll_chat(chat: LiveChatVelocity, emit, stop: threading.Event) -> None:
             emit({"type": "chat_unavailable", "message": str(exc)})
             return
         stop.wait(max(1.0, delay))
-    while True:
-        if stop_path.exists():
-            emit({"type": "stopped"})
-            return 0
-        time.sleep(0.25)
+
+
+def _forward_capture_event(event: dict, config: dict, live: LiveAutoClipper, emit) -> None:
+    if event.get("type") == "stream_title" and event.get("title"):
+        config["stream_name"] = str(event["title"])
+        live.config["stream_name"] = str(event["title"])
+    emit(event)

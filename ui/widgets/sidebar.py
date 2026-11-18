@@ -11,6 +11,7 @@ from core.paths import asset_path
 NAV_ITEMS = [
     ("home", "Download Stream"),
     ("clipper", "Auto Clippr"),
+    ("live", "Auto Clipper (Live)"),
     ("queue", "Queue"),
     ("history", "History"),
     ("settings", "Settings"),
@@ -77,6 +78,8 @@ class Sidebar(QWidget):
             self._buttons[key] = btn
             layout.addWidget(btn)
 
+        self._buttons["live"].hide()
+
         layout.addStretch(1)
 
         footer = QLabel(COPYRIGHT_LINE)
@@ -90,3 +93,6 @@ class Sidebar(QWidget):
         btn = self._buttons.get(key)
         if btn:
             btn.setChecked(True)
+
+    def set_live_enabled(self, enabled: bool) -> None:
+        self._buttons["live"].setVisible(bool(enabled))

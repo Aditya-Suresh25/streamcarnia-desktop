@@ -13,6 +13,21 @@ from services.live_clipper.store import LiveJobStore
 
 
 class LiveDetectionTests(unittest.TestCase):
+    def test_progress_heartbeat_advances_percentage_and_eta_during_long_stage(self):
+        with tempfile.TemporaryDirectory() as td:
+            now = {"value": 10.0}
+            events = []
+            service = LiveAutoClipper(config={"threshold": 2}, ffmpeg="ffmpeg", output_dir=Path(td),
+                emit=events.append, store=LiveJobStore(Path(td) / "jobs.sqlite3"),
+                clock=lambda: now["value"])
+            service._clip_started["job"] = 0.0
+            service._forward_progress({"stage": "transcribe"}, "job", 1, 3)
+            first = events[-1]["percent"]
+            now["value"] += 90
+            service._forward_progress({"stage": "transcribe", "heartbeat": True}, "job", 1, 3)
+            self.assertGreater(events[-1]["percent"], first)
+            self.assertIsNotNone(events[-1]["eta_seconds"])
+
     def test_audio_spike_and_cooldown_and_clip_limit(self):
         detector = IncrementalHighlightDetector(threshold=2, cooldown_seconds=120, max_clips=2)
         detector.process(np.full(120, -30.0), 0)

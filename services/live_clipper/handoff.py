@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import os
 import json
+import queue
 import re
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 from typing import Callable
 
@@ -131,16 +133,39 @@ class VodHandoff:
                                 bufsize=1, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
                                 if os.name == "nt" else 0)
         tail = []
-        try:
+        lines = queue.Queue()
+
+        def read_output():
             assert child.stdout is not None
             for line in child.stdout:
+                lines.put(line)
+            lines.put(None)
+
+        reader = threading.Thread(target=read_output, name="VodPipelineProgress", daemon=True)
+        reader.start()
+        current_stage = "source"
+        closed = False
+        try:
+            while not closed:
+                try:
+                    line = lines.get(timeout=1.0)
+                except queue.Empty:
+                    if progress:
+                        progress({"stage": current_stage, "heartbeat": True})
+                    continue
+                if line is None:
+                    closed = True
+                    continue
                 tail.append(line.rstrip())
                 tail = tail[-60:]
                 prefix = "@@SC_PROGRESS@@"
                 message = line.strip()
-                if progress and message.startswith(prefix):
+                if message.startswith(prefix):
                     try:
-                        progress(json.loads(message[len(prefix):]))
+                        event = json.loads(message[len(prefix):])
+                        current_stage = event.get("stage", current_stage)
+                        if progress:
+                            progress(event)
                     except (TypeError, ValueError):
                         pass
             code = child.wait()

@@ -52,6 +52,16 @@ class RollingSegmentBuffer:
     def get(self, sequence: int) -> Segment | None:
         return next((item for item in self._segments if item.sequence == sequence), None)
 
+    def clear(self) -> list[Path]:
+        removed = []
+        for segment in list(self._segments):
+            if any(segment.sequence in sequences for sequences in self._pins.values()):
+                continue
+            self._segments.remove(segment)
+            segment.path.unlink(missing_ok=True)
+            removed.append(segment.path)
+        return removed
+
     def prune(self) -> list[Path]:
         removed = []
         max_segments = max(1, self.retention_seconds // 300)
@@ -68,7 +78,7 @@ class RollingSegmentBuffer:
         return removed
 
 
-def resolve_live_media(url: str) -> tuple[str, bool]:
+def resolve_live_media(url: str) -> tuple[str, bool, str]:
     """Return a direct media URL and whether the source still reports live."""
     import yt_dlp
 
@@ -79,13 +89,13 @@ def resolve_live_media(url: str) -> tuple[str, bool]:
     if not isinstance(info, dict):
         raise RuntimeError("Stream metadata could not be read")
     if info.get("is_live") is False and info.get("live_status") not in ("is_live", "is_upcoming"):
-        return "", False
+        return "", False, str(info.get("title") or "Live stream")
     direct = info.get("url")
     if not direct and info.get("requested_formats"):
         raise RuntimeError("This live source requires a merged audio/video format")
     if not direct:
         raise RuntimeError("No direct live media URL was provided by yt-dlp")
-    return str(direct), True
+    return str(direct), True, str(info.get("title") or "Live stream")
 
 
 class LiveSegmentRecorder:
@@ -118,7 +128,13 @@ class LiveSegmentRecorder:
     def run(self) -> None:
         while not self.stop_requested():
             try:
-                media_url, is_live = self.resolver(self.url)
+                resolved = self.resolver(self.url)
+                if len(resolved) == 2:
+                    media_url, is_live = resolved
+                    title = "Live stream"
+                else:
+                    media_url, is_live, title = resolved
+                self.emit({"type": "stream_title", "title": title})
                 if not is_live:
                     self._emit_completed()
                     self.emit({"type": "stream_ended"})

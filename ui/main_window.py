@@ -12,6 +12,7 @@ from core.cookies import CookieExtractionError, resolve_cookies_path
 from core.paths import asset_path
 from core.queue_manager import QueueManager
 from core.settings_store import SettingsStore
+from services.live_clipper.config import LiveClipperSettings
 from ui.pages.history_page import HistoryPage
 from ui.pages.home_page import HomePage
 from ui.pages.auto_clipper_page import AutoClipperPage
@@ -29,6 +30,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._settings_store = settings_store
         self._history_store = history_store
+        self._live_settings = LiveClipperSettings()
+        self._live_page = None
+        self._page_keys = list(PAGE_ORDER)
+        self._active_page_key = "home"
 
         self.setWindowTitle("StreamCarnia")
         icon_path = asset_path("logo.png")
@@ -78,9 +83,12 @@ class MainWindow(QMainWindow):
         self.home_page.download_started.connect(lambda: self._on_page_selected("queue"))
         self.settings_page.theme_changed.connect(self._apply_theme)
         self.settings_page.queue_settings_changed.connect(self._queue_manager.refresh_concurrency)
+        self.settings_page.live_settings_changed.connect(self._set_live_page_enabled)
 
         for page in (self.home_page, self.clipper_page, self.queue_page, self._history_page, self.settings_page):
             self.stack.addWidget(page)
+
+        self._set_live_page_enabled(self._live_settings.get().enabled)
 
         self._toast_host = ToastHost(self)
         self._toast_host.move(self.width() - 340, 20)
@@ -98,14 +106,35 @@ class MainWindow(QMainWindow):
         # objects after the window is gone.
         self._queue_manager.cancel_all()
         self.clipper_page.cancel()
+        if self._live_page:
+            self._live_page.shutdown()
         super().closeEvent(event)
 
     def _on_page_selected(self, key: str) -> None:
-        index = PAGE_ORDER.index(key)
+        if key not in self._page_keys:
+            return
+        index = self._page_keys.index(key)
         self.stack.setCurrentIndex(index)
+        self._active_page_key = key
         self.sidebar.select(key)
         if key == "history":
             self._history_page.refresh()
+
+    def _set_live_page_enabled(self, enabled: bool) -> None:
+        if enabled and self._live_page is None:
+            from ui.pages.live_auto_clipper_page import LiveAutoClipperPage
+            self._live_page = LiveAutoClipperPage(self._settings_store)
+            self.stack.addWidget(self._live_page)
+            self._page_keys.append("live")
+        elif not enabled and self._live_page is not None:
+            if self._active_page_key == "live":
+                self._on_page_selected("settings")
+            self._live_page.shutdown()
+            self.stack.removeWidget(self._live_page)
+            self._live_page.deleteLater()
+            self._live_page = None
+            self._page_keys.remove("live")
+        self.sidebar.set_live_enabled(enabled)
 
     def _apply_theme(self, accent_name: str) -> None:
         self.setStyleSheet(build_qss(accent_name))
