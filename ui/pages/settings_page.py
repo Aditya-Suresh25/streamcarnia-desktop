@@ -26,7 +26,7 @@ from ui.theme import ACCENT_PRESETS, palette
 from ui.widgets.buttons import GhostButton, PrimaryButton
 from workers.oauth_worker import YouTubeOAuthWorker
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 COPYRIGHT_LINE = "\u00a9 Aditya Suresh. All rights reserved."
 
 
@@ -410,7 +410,9 @@ class SettingsPage(QWidget):
         try:
             connected = bool(CredentialVault().get("youtube.oauth"))
             has_key = bool(CredentialVault().get("gemini.api_key"))
-            self.live_credential_status.setText("Gemini API key is saved securely." if has_key else "No Gemini API key saved.")
+            self.live_credential_status.setText(
+                "Gemini API key is configured (Settings or .env)." if has_key else "No Gemini API key configured."
+            )
             if connected:
                 self.oauth_status.setText("YouTube is connected. OAuth tokens are stored securely.")
         except Exception:

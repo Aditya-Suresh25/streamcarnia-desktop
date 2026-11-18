@@ -158,13 +158,17 @@ fetched from the channel. Outputs are saved under
 `<download folder>/StreamCarnia Clips/<job timestamp>/` with a job log,
 candidate metadata, clip metadata, caption sidecars, and intermediate files.
 
-This first version supports archived VODs; it does not record active streams.
-Auto Clippr requires the packages in `desktop/requirements.txt`. The first
-transcription run downloads the Whisper `small` model into the user's model
-cache, so it needs internet access and additional disk space. Transcription
-and video rendering can use substantial CPU, memory, and time. FFmpeg must
-include the `ass` filter (`libass`). Missing clipping dependencies are
-reported in Auto Clippr without changing regular stream downloads.
+Auto Clippr supports archived VODs. Version 1.0.1 adds an opt-in Live Auto
+Clipper workflow that records rolling stream segments, detects audio highlights,
+and sends selected moments through the existing portrait/caption pipeline.
+Live monitoring, chat analysis, and upload scheduling run outside the main UI
+process. YouTube chat is optional; Gemini metadata and YouTube uploads require
+their respective credentials. The Live transcription selector offers Small,
+Medium, and Large-v3 models; a selected model may download into the user's
+model cache on first use. Transcription and video rendering can use substantial
+CPU, memory, disk space, and time. FFmpeg must include the `ass` filter
+(`libass`). Missing clipping dependencies are reported without changing
+regular stream downloads.
 
 The `desktop/services/clipper/` scripts are the local application adaptation
 of the user-provided `livestream-clipper.skill` pipeline; the skill archive is

@@ -104,7 +104,8 @@ class VodHandoff:
         else:
             command = [sys.executable, str(pipeline)]
         command += [str(source), "--out", str(output), "--top", "1", "--ranges", f"0-{duration:.3f}",
-                    "--layout", config.get("layout", "blur"), "--style", config.get("caption_style", "pop")]
+                    "--layout", config.get("layout", "blur"), "--style", config.get("caption_style", "pop"),
+                    "--model", config.get("transcription_model", "medium"), "--live-hinglish"]
         if config.get("language"):
             command += ["--lang", str(config["language"])]
         if config.get("facecam"):

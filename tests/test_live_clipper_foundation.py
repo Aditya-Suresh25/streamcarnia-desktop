@@ -27,6 +27,9 @@ class LiveFoundationTests(unittest.TestCase):
                 LiveClipperConfig(clip_length_seconds=duration).validated()
         with self.assertRaises(ValueError):
             LiveClipperConfig(layout="landscape").validated()
+        self.assertEqual(LiveClipperConfig().transcription_model, "medium")
+        with self.assertRaises(ValueError):
+            LiveClipperConfig(transcription_model="unknown").validated()
 
     def test_live_job_state_is_separate_and_persists_unicode(self):
         with tempfile.TemporaryDirectory() as td:

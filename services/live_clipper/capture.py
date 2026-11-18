@@ -78,24 +78,38 @@ class RollingSegmentBuffer:
         return removed
 
 
-def resolve_live_media(url: str) -> tuple[str, bool, str]:
-    """Return a direct media URL and whether the source still reports live."""
+def resolve_live_media(url: str) -> tuple[dict, bool, str]:
+    """Return one or more direct media tracks and whether the source is live.
+
+    YouTube live streams commonly expose video and audio as separate HLS
+    formats. Asking yt-dlp for ``best`` alone only works when a muxed format is
+    available, so request both tracks with a muxed fallback.
+    """
     import yt_dlp
 
     options = {"quiet": True, "no_warnings": True, "noplaylist": True,
-               "format": "best[protocol^=http]/best"}
+               "format": "bestvideo+bestaudio/best"}
     with yt_dlp.YoutubeDL(options) as ydl:
         info = ydl.extract_info(url, download=False)
     if not isinstance(info, dict):
         raise RuntimeError("Stream metadata could not be read")
     if info.get("is_live") is False and info.get("live_status") not in ("is_live", "is_upcoming"):
         return "", False, str(info.get("title") or "Live stream")
+    requested = info.get("requested_formats")
+    if isinstance(requested, list) and requested:
+        streams = []
+        for item in requested:
+            if not isinstance(item, dict) or not item.get("url"):
+                continue
+            streams.append({"url": str(item["url"]),
+                            "headers": item.get("http_headers") or info.get("http_headers") or {}})
+        if streams:
+            return {"streams": streams}, True, str(info.get("title") or "Live stream")
     direct = info.get("url")
-    if not direct and info.get("requested_formats"):
-        raise RuntimeError("This live source requires a merged audio/video format")
     if not direct:
         raise RuntimeError("No direct live media URL was provided by yt-dlp")
-    return str(direct), True, str(info.get("title") or "Live stream")
+    return {"streams": [{"url": str(direct),
+                         "headers": info.get("http_headers") or {}}]}, True, str(info.get("title") or "Live stream")
 
 
 class LiveSegmentRecorder:
@@ -150,15 +164,29 @@ class LiveSegmentRecorder:
         self._emit_completed(final=True)
         self.emit({"type": "capture_stopped"})
 
-    def _record_connection(self, media_url: str) -> None:
+    def _record_connection(self, media_source: str | dict) -> None:
         start_seq = self._sequence + 1
         pattern = self.root / f"segment_{start_seq:08d}_%06d.ts"
-        command = [self.ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin",
-                   "-rw_timeout", "15000000", "-reconnect", "1", "-reconnect_streamed", "1",
-                   "-reconnect_delay_max", "10", "-i", media_url, "-map", "0:v:0?",
-                   "-map", "0:a:0?", "-c", "copy", "-f", "segment", "-segment_time",
-                   str(self.segment_seconds), "-reset_timestamps", "1", "-segment_format", "mpegts",
-                   str(pattern)]
+        if isinstance(media_source, dict):
+            streams = media_source.get("streams") or []
+        else:  # Backward compatibility for injected/custom resolvers.
+            streams = [{"url": media_source, "headers": {}}]
+        streams = [item for item in streams if isinstance(item, dict) and item.get("url")]
+        if not streams:
+            raise RuntimeError("No usable live media tracks were provided")
+        command = [self.ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin"]
+        for stream in streams:
+            command.extend(["-rw_timeout", "15000000", "-reconnect", "1",
+                            "-reconnect_streamed", "1", "-reconnect_delay_max", "10"])
+            headers = stream.get("headers") or {}
+            if isinstance(headers, dict) and headers:
+                header_text = "".join(f"{key}: {value}\r\n" for key, value in headers.items())
+                command.extend(["-headers", header_text])
+            command.extend(["-i", str(stream["url"])])
+        audio_input = 1 if len(streams) > 1 else 0
+        command.extend(["-map", "0:v:0?", "-map", f"{audio_input}:a:0?", "-c", "copy",
+                        "-f", "segment", "-segment_time", str(self.segment_seconds),
+                        "-reset_timestamps", "1", "-segment_format", "mpegts", str(pattern)])
         kwargs = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
         if os.name == "nt":
             kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW

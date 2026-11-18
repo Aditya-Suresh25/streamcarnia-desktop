@@ -3,10 +3,62 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from services.live_clipper.capture import LiveSegmentRecorder, RollingSegmentBuffer, Segment
+from services.live_clipper.capture import LiveSegmentRecorder, RollingSegmentBuffer, Segment, resolve_live_media
 
 
 class LiveCaptureTests(unittest.TestCase):
+    def test_resolver_accepts_split_live_tracks_with_headers(self):
+        class FakeYDL:
+            def __init__(self, options):
+                self.options = options
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def extract_info(self, _url, download=False):
+                self.assert_format()
+                return {"title": "Live", "is_live": True, "requested_formats": [
+                    {"url": "video.m3u8", "http_headers": {"User-Agent": "agent"}},
+                    {"url": "audio.m3u8", "http_headers": {"Referer": "https://youtube.com/"}},
+                ]}
+
+            def assert_format(self):
+                if self.options["format"] != "bestvideo+bestaudio/best":
+                    raise AssertionError("expected split-track selector")
+
+        with patch.dict("sys.modules", {"yt_dlp": type("FakeYtDlp", (), {"YoutubeDL": FakeYDL})}):
+            media, is_live, title = resolve_live_media("https://youtube.com/live/example")
+        self.assertTrue(is_live)
+        self.assertEqual(title, "Live")
+        self.assertEqual([item["url"] for item in media["streams"]], ["video.m3u8", "audio.m3u8"])
+        self.assertEqual(media["streams"][0]["headers"], {"User-Agent": "agent"})
+
+    def test_recorder_applies_per_track_headers_and_maps_split_audio(self):
+        with tempfile.TemporaryDirectory() as td:
+            commands = []
+
+            class FinishedProcess:
+                def poll(self):
+                    return 0
+
+            recorder = LiveSegmentRecorder(
+                "url", Path(td), "ffmpeg", lambda _event: None, lambda: False,
+                popen=lambda command, **_kwargs: (commands.append(command) or FinishedProcess()),
+                sleep=lambda _delay: None,
+            )
+            recorder._record_connection({"streams": [
+                {"url": "video.m3u8", "headers": {"User-Agent": "agent"}},
+                {"url": "audio.m3u8", "headers": {"Referer": "https://youtube.com/"}},
+            ]})
+            command = commands[0]
+            self.assertIn("User-Agent: agent\r\n", command)
+            self.assertIn("Referer: https://youtube.com/\r\n", command)
+            self.assertIn("1:a:0?", command)
+            self.assertEqual(command.count("-i"), 2)
+
     def test_buffer_prunes_oldest_unpinned_segments_but_keeps_pinned(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

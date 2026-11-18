@@ -95,6 +95,14 @@ class LiveAutoClipperPage(QWidget):
             col.addWidget(control)
             row.addLayout(col, 1)
         config.addLayout(row)
+        self.transcription_combo = QComboBox()
+        for label, data in (("Small — faster", "small"), ("Medium — recommended", "medium"),
+                            ("Large-v3 — best accuracy", "large-v3")):
+            self.transcription_combo.addItem(label, data)
+        self.transcription_combo.setToolTip(
+            "Larger multilingual Whisper models usually improve Hindi recognition, but take more time and disk space the first time they are downloaded.")
+        config.addWidget(self._label("Speech recognition quality"))
+        config.addWidget(self.transcription_combo)
         schedule_row = QHBoxLayout()
         self.schedule_start = QTimeEdit()
         self.schedule_start.setDisplayFormat("HH:mm")
@@ -173,6 +181,9 @@ class LiveAutoClipperPage(QWidget):
             index = combo.findData(data)
             if index >= 0:
                 combo.setCurrentIndex(index)
+        model_index = self.transcription_combo.findData(config.transcription_model)
+        if model_index >= 0:
+            self.transcription_combo.setCurrentIndex(model_index)
         self.schedule_start.setTime(self.schedule_start.time().fromString(config.schedule_start, "HH:mm"))
         self.schedule_end.setTime(self.schedule_end.time().fromString(config.schedule_end, "HH:mm"))
         self.approve_check.setChecked(config.approve_before_upload)
@@ -184,6 +195,7 @@ class LiveAutoClipperPage(QWidget):
             enabled=enabled, max_clips_per_stream=self.max_clips.value(),
             clip_length_seconds=self.length.value(), threshold=self.threshold.value(),
             layout=self.layout_combo.currentData(), caption_style=self.caption_combo.currentData(),
+            transcription_model=self.transcription_combo.currentData(),
             approve_before_upload=self.approve_check.isChecked(),
             schedule_start=self.schedule_start.time().toString("HH:mm"),
             schedule_end=self.schedule_end.time().toString("HH:mm"),

@@ -8,8 +8,8 @@
 # stripped without rebuilding from source.
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 0, 0, 0),
-    prodvers=(1, 0, 0, 0),
+    filevers=(1, 0, 1, 0),
+    prodvers=(1, 0, 1, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -25,12 +25,12 @@ VSVersionInfo(
           [
             StringStruct(u'CompanyName', u'Aditya Suresh'),
             StringStruct(u'FileDescription', u'StreamCarnia Desktop \u2014 YouTube downloader'),
-            StringStruct(u'FileVersion', u'1.0.0.0'),
+            StringStruct(u'FileVersion', u'1.0.1.0'),
             StringStruct(u'InternalName', u'StreamCarnia'),
             StringStruct(u'LegalCopyright', u'\u00a9 Aditya Suresh. All rights reserved.'),
             StringStruct(u'OriginalFilename', u'StreamCarnia.exe'),
             StringStruct(u'ProductName', u'StreamCarnia Desktop'),
-            StringStruct(u'ProductVersion', u'1.0.0.0'),
+            StringStruct(u'ProductVersion', u'1.0.1.0'),
           ]
         )
       ]

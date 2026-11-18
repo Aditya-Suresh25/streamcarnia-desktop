@@ -37,6 +37,8 @@ hiddenimports += collect_submodules("yt_dlp.extractor")
 hiddenimports += [
     "yt_dlp.cookies",
     "PySide6.QtSvg",
+    # Loaded only after the Live Auto Clipper feature flag is enabled.
+    "ui.pages.live_auto_clipper_page",
 ]
 
 # Auto Clippr: transcription runs locally and downloads its Whisper model to

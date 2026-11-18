@@ -7,6 +7,7 @@ from pathlib import Path
 from threading import RLock
 
 from core.paths import app_data_dir
+from .env_config import live_env_value
 
 CONFIG_PATH = app_data_dir() / "live_clipper.json"
 
@@ -19,6 +20,7 @@ class LiveClipperConfig:
     threshold: float = 2.0
     layout: str = "blur"
     caption_style: str = "pop"
+    transcription_model: str = "medium"
     approve_before_upload: bool = True
     schedule_start: str = "09:00"
     schedule_end: str = "21:00"
@@ -36,6 +38,8 @@ class LiveClipperConfig:
             raise ValueError("Live clips must use a portrait layout: blur, center, or stack")
         if self.caption_style not in {"pop", "bounce", "word", "karaoke"}:
             raise ValueError("Unsupported animated caption style")
+        if self.transcription_model not in {"small", "medium", "large-v3"}:
+            raise ValueError("Transcription model must be small, medium, or large-v3")
         for value in (self.schedule_start, self.schedule_end):
             _parse_clock(value)
         if _parse_clock(self.schedule_end) <= _parse_clock(self.schedule_start):
@@ -63,7 +67,7 @@ class LiveClipperSettings:
     def get(self) -> LiveClipperConfig:
         with self._lock:
             if not self.path.exists():
-                return LiveClipperConfig()
+                return LiveClipperConfig(oauth_client_file=live_env_value("oauth_client_file") or "")
             try:
                 raw = json.loads(self.path.read_text(encoding="utf-8"))
                 # Accept the advertised dotted feature-flag key as well as nested config.
@@ -71,9 +75,11 @@ class LiveClipperSettings:
                 raw.pop("enabled", None)
                 allowed = set(LiveClipperConfig.__dataclass_fields__) - {"enabled"}
                 options = {key: value for key, value in raw.items() if key in allowed}
+                if not options.get("oauth_client_file"):
+                    options["oauth_client_file"] = live_env_value("oauth_client_file") or ""
                 return LiveClipperConfig(enabled=bool(enabled), **options).validated()
             except (OSError, TypeError, ValueError, json.JSONDecodeError):
-                return LiveClipperConfig()
+                return LiveClipperConfig(oauth_client_file=live_env_value("oauth_client_file") or "")
 
     def update(self, **changes) -> LiveClipperConfig:
         with self._lock:

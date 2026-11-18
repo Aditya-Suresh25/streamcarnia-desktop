@@ -146,7 +146,8 @@ class SchedulerTests(unittest.TestCase):
                       {"snippet": {"publishedAt": "2026-11-18T10:00:03Z"}}]}
         service = Mock()
         service.liveChatMessages.return_value.list.return_value = request
-        chat = LiveChatVelocity(service, "chat-id")
+        # Keep the fixed fixture timestamps valid regardless of when the suite runs.
+        chat = LiveChatVelocity(service, "chat-id", max_age_seconds=24 * 60 * 60)
         chat.poll()
         start = datetime(2026, 11, 18, 10, 0, tzinfo=timezone.utc).timestamp()
         self.assertEqual(chat.counts_for(start, 5).tolist(), [0, 1, 0, 1, 0])

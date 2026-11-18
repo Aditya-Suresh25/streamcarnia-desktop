@@ -1,0 +1,10 @@
+# Local API credentials. Keep secrets out of Git.
+.env
+
+# Python caches and local build products.
+__pycache__/
+*.py[cod]
+build/
+dist/
+.pytest_cache/
+*.egg-info/

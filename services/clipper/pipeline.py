@@ -77,6 +77,8 @@ def main():
     ap.add_argument("--highlight", default="#FFD400"); ap.add_argument("--color", default="#FFFFFF")
     ap.add_argument("--no-captions", action="store_true")
     ap.add_argument("--model", default="small"); ap.add_argument("--lang")
+    ap.add_argument("--live-hinglish", action="store_true",
+                    help="use live-only Devanagari-to-Hinglish caption conversion")
     ap.add_argument("--max-height", type=int, default=1080)
     ap.add_argument("--cookies-from-browser", dest="cookies")
     ap.add_argument("--cookies", help="Netscape cookies file path")
@@ -188,7 +190,10 @@ def main():
                 if any("\u0900" <= char <= "\u097f" for word in caption_w for char in str(word.get("w", ""))):
                     progress("romanize", clip_index, len(cands))
                     stage = "romanization"
-                    from romanize import caption_words
+                    if a.live_hinglish:
+                        from live_hinglish import caption_words
+                    else:
+                        from romanize import caption_words
                     caption_w = caption_words(caption_w)
                 caption_text = " ".join(str(word.get("w", "")) for word in caption_w).strip()
                 tr["caption_words"] = caption_w

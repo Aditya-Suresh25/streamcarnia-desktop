@@ -114,6 +114,8 @@ class HandoffTests(unittest.TestCase):
             self.assertIn("--ranges", commands)
             self.assertIn("--layout", commands)
             self.assertIn("--style", commands)
+            self.assertEqual(commands[commands.index("--model") + 1], "medium")
+            self.assertIn("--live-hinglish", commands)
 
 
 if __name__ == "__main__":
