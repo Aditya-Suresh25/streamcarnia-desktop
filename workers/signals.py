@@ -14,3 +14,10 @@ class AnalyzeSignals(QObject):
 class DownloadSignals(QObject):
     updated = Signal(object)     # backend.models.schemas.DownloadItem
     finished = Signal(object)    # DownloadItem (completed or cancelled or failed)
+
+
+class ClipSignals(QObject):
+    progress = Signal(object)
+    finished = Signal(object)  # clips and the job summary, including partial results
+    failed = Signal(str)
+    cancelled = Signal()

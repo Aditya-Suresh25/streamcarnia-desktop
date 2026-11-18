@@ -11,7 +11,7 @@ Build with:  build_windows.bat
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
 
 block_cipher = None
 
@@ -28,6 +28,7 @@ if FFMPEG_SRC.is_file():
 
 datas = [
     (str(ASSETS_DIR), "assets"),
+    (str(DESKTOP_DIR / "services" / "clipper"), "services/clipper"),
 ]
 datas += collect_data_files("yt_dlp")
 
@@ -37,6 +38,14 @@ hiddenimports += [
     "yt_dlp.cookies",
     "PySide6.QtSvg",
 ]
+
+# Auto Clippr: transcription runs locally and downloads its Whisper model to
+# the user's cache on first use. Include inference package modules/native libs.
+for package in ("faster_whisper", "ctranslate2"):
+    pkg_datas, pkg_bins, pkg_hidden = collect_all(package)
+    datas += pkg_datas
+    binaries += pkg_bins
+    hiddenimports += pkg_hidden
 
 a = Analysis(
     [str(DESKTOP_DIR / "main.py")],
