@@ -40,6 +40,10 @@ def _dispatch_child_process() -> bool:
         from yt_dlp import main as ytdlp_main
         ytdlp_main(sys.argv[2:])
         return True
+    if mode == "--run-live-worker" and len(sys.argv) >= 3:
+        _restore_child_stdio()
+        from services.live_clipper.worker import run_worker
+        raise SystemExit(run_worker(sys.argv[2]))
     return False
 
 

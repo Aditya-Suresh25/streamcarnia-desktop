@@ -6,7 +6,7 @@ from __future__ import annotations
 import yt_dlp
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
-    QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QScrollArea, QSpinBox, QVBoxLayout, QWidget,
 )
 
@@ -16,6 +16,7 @@ from core.settings_store import (
     COOKIE_MODE_BROWSER, COOKIE_MODE_FILE, COOKIE_MODE_NONE,
     SUPPORTED_COOKIE_BROWSERS, SettingsStore,
 )
+from services.live_clipper.config import LiveClipperSettings
 from ui.effects import apply_card_shadow
 from ui.theme import ACCENT_PRESETS, palette
 from ui.widgets.buttons import GhostButton, PrimaryButton
@@ -67,6 +68,7 @@ class SettingsPage(QWidget):
     def __init__(self, settings_store: SettingsStore, parent=None):
         super().__init__(parent)
         self._settings_store = settings_store
+        self._live_settings = LiveClipperSettings()
         self._eyebrow_marks: list[QFrame] = []
 
         scroll = QScrollArea(self)
@@ -92,6 +94,7 @@ class SettingsPage(QWidget):
         layout.addWidget(self._build_downloads_section())
         layout.addWidget(self._build_cookies_section())
         layout.addWidget(self._build_appearance_section())
+        layout.addWidget(self._build_live_clipper_section())
         layout.addWidget(self._build_status_section())
         layout.addWidget(self._build_about_section())
         layout.addStretch(1)
@@ -217,6 +220,21 @@ class SettingsPage(QWidget):
         layout.addLayout(row)
         return frame
 
+    def _build_live_clipper_section(self) -> QFrame:
+        frame, layout, mark = _section("LIVE AUTO CLIPPER")
+        self._eyebrow_marks.append(mark)
+        self.live_enabled = QCheckBox("Enable Live Auto Clipper")
+        self.live_enabled.setObjectName("FieldLabel")
+        layout.addWidget(self.live_enabled)
+        note = QLabel("Optional live monitoring is off by default. Enabling it adds the live monitor to StreamCarnia.")
+        note.setObjectName("Faint")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        save_btn = PrimaryButton("Save Live Settings")
+        save_btn.clicked.connect(self._save_live_settings)
+        layout.addWidget(save_btn)
+        return frame
+
     def _build_status_section(self) -> QFrame:
         frame, layout, mark = _section("SYSTEM STATUS")
         self._eyebrow_marks.append(mark)
@@ -304,6 +322,7 @@ class SettingsPage(QWidget):
         if s.cookie_browser.lower() in SUPPORTED_COOKIE_BROWSERS:
             self.browser_combo.setCurrentText(s.cookie_browser.title())
         self.cookie_file_input.setText(s.cookie_file)
+        self.live_enabled.setChecked(self._live_settings.get().enabled)
 
         self.accent_combo.blockSignals(True)
         self.accent_combo.setCurrentText(s.accent.title())
@@ -321,3 +340,6 @@ class SettingsPage(QWidget):
             cookie_file=self.cookie_file_input.text().strip(),
         )
         self.queue_settings_changed.emit()
+
+    def _save_live_settings(self) -> None:
+        self._live_settings.update(enabled=self.live_enabled.isChecked())
