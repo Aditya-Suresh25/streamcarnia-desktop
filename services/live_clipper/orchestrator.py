@@ -4,6 +4,8 @@ from __future__ import annotations
 import time
 import uuid
 import sqlite3
+import os
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -25,6 +27,7 @@ class PendingHighlight:
     trigger_at: float
     score: float
     ready_at: float
+    wall_trigger_at: float
 
 
 class LiveAutoClipper:
@@ -49,7 +52,8 @@ class LiveAutoClipper:
         self.youtube_builder = youtube_builder
         self.uploader_factory = uploader_factory
         self.detector = IncrementalHighlightDetector(
-            threshold=float(config.get("threshold", 2.0)), cooldown_seconds=120,
+            threshold=float(config.get("threshold", 2.0)),
+            cooldown_seconds=int(config.get("cooldown_seconds", 600)),
             max_clips=int(config.get("max_clips_per_stream", 10)))
         self.pending: list[PendingHighlight] = []
         self.completed = 0
@@ -71,13 +75,20 @@ class LiveAutoClipper:
             for highlight in highlights:
                 length = int(self.config.get("clip_length_seconds", 60))
                 key = str(uuid.uuid4())
+                wall_started_at = segment.wall_started_at
+                if wall_started_at is None:
+                    wall_started_at = time.time() - segment.duration
+                wall_trigger_at = wall_started_at + (highlight.trigger_at - segment.started_at)
                 pending = PendingHighlight(key, highlight.trigger_at, highlight.score,
-                                           highlight.trigger_at + length - 20)
+                                           highlight.trigger_at + length - 20, wall_trigger_at)
                 self.pending.append(pending)
                 try:
                     job_id = self.store.create(self.config.get("stream_url", ""), {
                         "trigger_at": highlight.trigger_at, "score": highlight.score,
+                        "wall_trigger_at": wall_trigger_at,
+                        "session_dir": str(self.config.get("output_dir", self.output_dir)),
                         "audio_score": highlight.audio_score, "chat_score": highlight.chat_score,
+                        "trigger_reason": highlight.trigger_reason,
                         "clip_length_seconds": length, "state": "detected",
                     })
                 except (sqlite3.Error, OSError) as exc:
@@ -88,10 +99,11 @@ class LiveAutoClipper:
                 needed_start = highlight.trigger_at - 20
                 sequences = [item.sequence for item in buffer.segments
                              if item.started_at + item.duration > needed_start]
-                buffer.pin(key, sequences)
-                self.emit({"type": "detected", "id": key, "trigger_at": highlight.trigger_at,
+                buffer.pin(pending.key, sequences)
+                self.emit({"type": "detected", "id": pending.key, "trigger_at": highlight.trigger_at,
                            "score": round(highlight.score, 3), "audio_score": round(highlight.audio_score, 3),
                            "chat_score": None if highlight.chat_score is None else round(highlight.chat_score, 3),
+                           "reason": highlight.trigger_reason,
                            "state": "detected"})
             self._refresh_pins(buffer)
             self._render_ready(buffer, segment.started_at + segment.duration)
@@ -131,14 +143,21 @@ class LiveAutoClipper:
                 handoff = self.handoff_factory(self.ffmpeg, self.output_dir / "clips")
                 final = handoff.render(chosen, pending.trigger_at, self.config,
                                        progress=lambda event: self._forward_progress(event, pending.key, clip_number, total))
+                thumbnail = self._make_thumbnail(final)
                 self.completed += 1
-                self.store.update(pending.key, "rendered", {"file_path": str(final)})
+                self.store.update(pending.key, "rendered", {"file_path": str(final),
+                                                              "thumbnail_path": str(thumbnail) if thumbnail else None})
                 self.emit({"type": "rendered", "id": pending.key, "clip": clip_number,
-                           "path": str(final), "state": "rendered", "completed": self.completed})
-                metadata = self._make_metadata(final, pending.trigger_at)
+                           "path": str(final), "thumbnail": str(thumbnail) if thumbnail else None,
+                           "state": "rendered", "completed": self.completed})
+                metadata = self._make_metadata(final, pending.wall_trigger_at)
                 self.store.update(pending.key, "titled", {"metadata": metadata, "file_path": str(final)})
+                if metadata.get("fallback"):
+                    self.emit({"type": "metadata_fallback", "id": pending.key,
+                               "reason": metadata.get("fallback_reason", "Gemini did not return valid metadata")})
                 self.emit({"type": "titled", "id": pending.key, "clip": clip_number,
                            "metadata": metadata, "fallback": metadata.get("fallback", False),
+                           "fallback_reason": metadata.get("fallback_reason"),
                            "state": "titled"})
                 if not self.config.get("approve_before_upload", True):
                     self.approve(pending.key)
@@ -155,7 +174,7 @@ class LiveAutoClipper:
                 self._clip_started.pop(pending.key, None)
                 self._progress_state.pop(pending.key, None)
 
-    def _make_metadata(self, final: Path, trigger_at: float) -> dict:
+    def _make_metadata(self, final: Path, wall_trigger_at: float) -> dict:
         transcript = ""
         clips_file = final.parent / "clips.json"
         try:
@@ -165,6 +184,7 @@ class LiveAutoClipper:
         except (OSError, ValueError, IndexError, TypeError):
             pass
         api_key = None
+        credential_error = None
         try:
             if self.vault_factory:
                 vault = self.vault_factory()
@@ -173,9 +193,32 @@ class LiveAutoClipper:
                 vault = CredentialVault()
             api_key = vault.get("gemini.api_key")
         except Exception as exc:
-            self.emit({"type": "metadata_fallback", "reason": str(exc)})
+            credential_error = f"Credential lookup failed: {type(exc).__name__}: {exc}"
+        # trigger_at is relative to the live capture timeline, never Unix time.
+        # Use the mapped wall-clock instant from the segment metadata instead.
+        trigger_time = datetime.fromtimestamp(wall_trigger_at).astimezone()
+        if self.metadata_factory is generate_metadata:
+            metadata = self.metadata_factory(transcript, self.config.get("stream_name", "Live stream"),
+                                             api_key, timestamp=trigger_time,
+                                             client_factory=self.gemini_client_factory)
+            if credential_error and metadata.get("fallback"):
+                metadata["fallback_reason"] = credential_error
+            return metadata
+        # Preserve the older injectable factory signature used by adapters.
         return self.metadata_factory(transcript, self.config.get("stream_name", "Live stream"),
                                      api_key, client_factory=self.gemini_client_factory)
+
+    def _make_thumbnail(self, video: Path) -> Path | None:
+        thumbnail = video.with_name(video.stem + "_thumb.jpg")
+        try:
+            result = subprocess.run(
+                [self.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-ss", "1",
+                 "-i", str(video), "-frames:v", "1", "-vf", "scale=360:-2", str(thumbnail)],
+                capture_output=True, check=False, timeout=30,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0)
+            return thumbnail if result.returncode == 0 and thumbnail.is_file() else None
+        except (OSError, subprocess.SubprocessError):
+            return None
 
     def approve(self, job_id: str) -> str:
         try:

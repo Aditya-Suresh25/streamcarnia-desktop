@@ -7,6 +7,7 @@ also be restricted by the platform's terms of service.
 import argparse
 import glob
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -24,6 +25,9 @@ def ytdlp(*args, cookies=None):
     else:
         cmd += ["-m", "yt_dlp"]
     cmd += ["--no-playlist", "--no-warnings"]
+    cache_dir = os.environ.get("STREAMCARNIA_CACHE_DIR")
+    if cache_dir:
+        cmd += ["--cache-dir", cache_dir]
     if cookies:
         if Path(cookies).is_file():
             cmd += ["--cookies", cookies]

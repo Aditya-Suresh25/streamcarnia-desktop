@@ -12,6 +12,8 @@ from .orchestrator import LiveAutoClipper
 from .chat import LiveChatVelocity
 from .secrets import CredentialVault
 from .youtube import active_live_chat_id, youtube_service
+from core.media_storage import configure_media_storage
+from .store import LiveJobStore
 
 
 def run_worker(config_path: str) -> int:
@@ -20,6 +22,8 @@ def run_worker(config_path: str) -> int:
     config = json.loads(config_path.read_text(encoding="utf-8"))
     event_path = Path(config["event_path"])
     stop_path = Path(config["stop_path"])
+    media_root = Path(config.get("media_root") or config.get("output_dir") or config_path.parent)
+    configure_media_storage(media_root, configure_tempfile=True)
 
     def emit(event: dict) -> None:
         with event_path.open("a", encoding="utf-8") as stream:
@@ -33,8 +37,9 @@ def run_worker(config_path: str) -> int:
     if config.get("stream_url") and config.get("ffmpeg_path"):
         output_dir = Path(config.get("output_dir", config_path.parent / "output"))
         buffer_dir = Path(config.get("buffer_dir", output_dir / "buffer"))
+        store = LiveJobStore(Path(config["queue_db_path"])) if config.get("queue_db_path") else LiveJobStore()
         live = LiveAutoClipper(config=config, ffmpeg=config["ffmpeg_path"],
-                               output_dir=output_dir, emit=emit)
+                               output_dir=output_dir, emit=emit, store=store)
 
         chat = _create_chat_client(config, emit)
         chat_thread_stop = threading.Event()

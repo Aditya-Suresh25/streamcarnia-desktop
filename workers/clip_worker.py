@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -12,6 +13,7 @@ from threading import Event
 from PySide6.QtCore import QRunnable, Slot
 
 from core.paths import asset_path, resource_path
+from core.media_storage import configure_media_storage
 from workers.signals import ClipSignals
 
 
@@ -31,14 +33,25 @@ class ClipWorker(QRunnable):
         self.cancel_event.set()
         if self._process and self._process.poll() is None:
             if os.name == "nt":
-                subprocess.run(["taskkill", "/PID", str(self._process.pid), "/T", "/F"],
-                               capture_output=True, check=False,
-                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                try:
+                    subprocess.run(["taskkill", "/PID", str(self._process.pid), "/T", "/F"],
+                                   capture_output=True, check=False, timeout=10,
+                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                except subprocess.TimeoutExpired:
+                    self._process.kill()
             else:
-                self._process.terminate()
+                try:
+                    os.killpg(self._process.pid, signal.SIGTERM)
+                except OSError:
+                    self._process.terminate()
+            try:
+                self._process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._process.kill()
 
     @Slot()
     def run(self) -> None:
+        configure_media_storage(self.options.get("media_root", self.output_dir.parent.parent))
         try:
             import numpy  # noqa: F401
             import faster_whisper  # noqa: F401
@@ -82,11 +95,15 @@ class ClipWorker(QRunnable):
             command = [sys.executable, str(pipeline)]
         args = [*command, self.options["url"], "--out", str(self.output_dir),
                 "--top", str(self.options["count"]), "--layout", self.options["layout"],
-                "--style", self.options["style"], "--archived-only"]
+                "--style", self.options["style"], "--model", self.options.get("model", "medium"),
+                "--archived-only"]
+        if self.options.get("ranges"):
+            args += ["--ranges", self.options["ranges"]]
         if self.options.get("language"):
             args += ["--lang", self.options["language"]]
         if self.options.get("facecam"):
             args += ["--facecam", self.options["facecam"]]
+        args += ["--stack-facecam-percent", str(self.options.get("stack_facecam_percent", 35))]
         if self.options.get("pan_zoom"):
             args += ["--peak-zoom"]
         if self.options.get("channel_name"):
@@ -103,14 +120,29 @@ class ClipWorker(QRunnable):
         env = os.environ.copy()
         ffmpeg_dir = str(Path(self.ffmpeg_path).parent)
         env["PATH"] = ffmpeg_dir + os.pathsep + env.get("PATH", "")
+        configure_media_storage(self.options.get("media_root", self.output_dir.parent.parent))
+        from core.media_storage import media_cache_dir
+        cache = media_cache_dir(self.options.get("media_root", self.output_dir.parent.parent))
+        env.update({key: os.environ[key] for key in (
+            "STREAMCARNIA_MEDIA_ROOT", "STREAMCARNIA_CACHE_DIR", "HF_HOME", "HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "TRANSFORMERS_CACHE", "HF_XET_CACHE", "HF_ASSETS_CACHE",
+            "TORCH_HOME", "XDG_CACHE_HOME", "TEMP", "TMP", "TMPDIR")})
+        cache_tmp = cache / "tmp"
+        cache_tmp.mkdir(parents=True, exist_ok=True)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        if self.cancel_event.is_set():
+            self.signals.cancelled.emit()
+            return
         try:
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+            popen_options = {"start_new_session": True} if os.name != "nt" else {}
             with (self.output_dir / "job.log").open("w", encoding="utf-8") as log_file:
                 self._process = subprocess.Popen(
                     args, cwd=scripts, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, encoding="utf-8", errors="replace", bufsize=1,
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
+                    creationflags=creationflags, **popen_options,
                 )
+                if self.cancel_event.is_set():
+                    self.cancel()
                 assert self._process.stdout is not None
                 for line in self._process.stdout:
                     log_file.write(line)
@@ -169,9 +201,11 @@ class ClipWorker(QRunnable):
             percent = 2
         else:
             total = total or self._progress_total
-            fractions = {"fetch": 0.12, "edit": 0.38, "transcribe": 0.63, "romanize": 0.72,
+            fractions = {"fetch": 0.12, "edit": 0.38, "transcribe": 0.55, "romanize": 0.72,
                          "burn": 0.90, "done": 1.0, "clip_failed": 1.0}
             fraction = fractions.get(stage, 0.0)
+            if stage == "transcribe" and event.get("fraction") is not None:
+                fraction = 0.55 + 0.14 * max(0.0, min(1.0, float(event["fraction"])))
             percent = 8 + (92 * min(1.0, ((max(clip, 1) - 1 + fraction) / total))) if total else 100
         percent = max(0, min(100, int(percent)))
         eta = None

@@ -31,8 +31,11 @@ class OutputStorageError(RuntimeError):
     """The job cannot safely continue because an output artifact could not be saved."""
 
 
-def progress(stage, clip=0, total=0):
-    print("@@SC_PROGRESS@@" + json.dumps({"stage": stage, "clip": clip, "total": total}), flush=True)
+def progress(stage, clip=0, total=0, fraction=None):
+    event = {"stage": stage, "clip": clip, "total": total}
+    if fraction is not None:
+        event["fraction"] = max(0.0, min(1.0, float(fraction)))
+    print("@@SC_PROGRESS@@" + json.dumps(event), flush=True)
 
 
 def write_json(path: Path, value) -> None:
@@ -69,8 +72,10 @@ def main():
     ap.add_argument("--pre", type=float, default=20); ap.add_argument("--post", type=float, default=25)
     ap.add_argument("--min-len", type=float, default=20); ap.add_argument("--max-len", type=float, default=60)
     ap.add_argument("--min-gap", type=float, default=90, help="min seconds between detected clips")
-    ap.add_argument("--layout", choices=["blur", "center", "stack", "landscape"], default="blur")
+    ap.add_argument("--layout", choices=["blur", "center", "stack", "landscape", "square"], default="blur")
     ap.add_argument("--facecam"); ap.add_argument("--track-face", action="store_true")
+    ap.add_argument("--stack-facecam-percent", type=int, default=35,
+                    help="facecam height as a percent of the top/bottom portrait layout")
     ap.add_argument("--no-trim", action="store_true")
     ap.add_argument("--style", choices=list(cap_mod.STYLES), default="pop")
     ap.add_argument("--font", default="Inter"); ap.add_argument("--fontsdir")
@@ -89,7 +94,8 @@ def main():
     ap.add_argument("--archived-only", action="store_true", help="reject active livestreams")
     a = ap.parse_args()
 
-    out = Path(a.out); work = out / "work"; work.mkdir(parents=True, exist_ok=True)
+    out = Path(a.out).resolve()
+    work = out / "work"; work.mkdir(parents=True, exist_ok=True)
     is_url = a.source.startswith("http")
     local = None if is_url else a.source
     chat_file = None
@@ -136,6 +142,8 @@ def main():
 
     # 3-5. per clip: fetch -> edit -> caption -> burn --------------------------
     facecam = tuple(float(x) for x in a.facecam.split(",")) if a.facecam else None
+    if not 20 <= a.stack_facecam_percent <= 50:
+        raise SystemExit("--stack-facecam-percent must be between 20 and 50")
     results = []
     failures = []
     summary = {"status": "running", "requested": len(cands), "completed": 0,
@@ -154,12 +162,14 @@ def main():
                 progress("edit", clip_index, len(cands))
                 stage = "edit/probe"
                 e = edit_mod.edit(raw, work / f"edit_{n}.mp4", layout=a.layout, trim_silence=not a.no_trim,
-                                  track_face=a.track_face, facecam=facecam, peak_zoom=a.peak_zoom)
+                                  track_face=a.track_face, facecam=facecam, peak_zoom=a.peak_zoom,
+                                  stack_facecam_percent=a.stack_facecam_percent)
             else:
                 progress("edit", clip_index, len(cands))
                 stage = "edit/probe"
                 e = edit_mod.edit(local, work / f"edit_{n}.mp4", c["start"], c["end"], a.layout,
-                                  not a.no_trim, a.track_face, facecam=facecam, peak_zoom=a.peak_zoom)
+                                  not a.no_trim, a.track_face, facecam=facecam, peak_zoom=a.peak_zoom,
+                                  stack_facecam_percent=a.stack_facecam_percent)
             final = out / f"clip_{n}.mp4"
             stage = "edit/probe"
             clip_duration = round(probe(e["path"])["duration"], 1)
@@ -180,7 +190,8 @@ def main():
                 progress("transcribe", clip_index, len(cands))
                 stage = "transcription"
                 from transcribe import transcribe
-                tr = transcribe(e["path"], a.model, a.lang)
+                tr = transcribe(e["path"], a.model, a.lang,
+                                on_progress=lambda value: progress("transcribe", clip_index, len(cands), value))
                 tr = dict(tr)
                 tr["words"] = [dict(word) for word in tr.get("words", [])]
                 # Save source-language transcription first so a later

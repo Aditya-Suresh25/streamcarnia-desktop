@@ -28,6 +28,11 @@ class QueueManager(QObject):
         self._pool = QThreadPool.globalInstance()
         self._apply_concurrency()
         self._workers: dict[str, DownloadWorker] = {}
+        self._items: dict[str, DownloadItem] = {}
+
+    def active_items(self) -> list[DownloadItem]:
+        """Snapshot current in-memory downloads for dashboard progress views."""
+        return list(self._items.values())
 
     def _apply_concurrency(self) -> None:
         n = max(1, int(self._settings_store.get().concurrent_downloads))
@@ -64,6 +69,7 @@ class QueueManager(QObject):
         worker.signals.updated.connect(self._on_updated)
         worker.signals.finished.connect(self._on_finished)
         self._workers[item.id] = worker
+        self._items[item.id] = item
         self.item_added.emit(item)
         self._pool.start(worker)
         return item
@@ -79,8 +85,11 @@ class QueueManager(QObject):
             worker.cancel()
 
     def _on_updated(self, item: DownloadItem) -> None:
+        self._items[item.id] = item
         self.item_updated.emit(item)
 
     def _on_finished(self, item: DownloadItem) -> None:
+        self._items[item.id] = item
         self.item_finished.emit(item)
         self._workers.pop(item.id, None)
+        self._items.pop(item.id, None)

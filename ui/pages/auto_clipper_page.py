@@ -5,20 +5,26 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QThreadPool, QUrl
+from PySide6.QtCore import QThreadPool, QUrl, Qt, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
-    QProgressBar, QScrollArea, QSpinBox, QVBoxLayout, QWidget,
+    QProgressBar, QScrollArea, QSpinBox, QToolButton, QVBoxLayout, QWidget,
 )
 
 from core.settings_store import SettingsStore
 from ui.effects import apply_card_shadow
 from ui.widgets.buttons import DangerGhostButton, GhostButton, PrimaryButton
+from ui.widgets.facecam_selector import FacecamSelector
+from ui.widgets.stack_layout_control import StackLayoutControl
+from ui.widgets.page_layout import configure_page_scroll
 from workers.clip_worker import ClipWorker
 
 
 class AutoClipperPage(QWidget):
+    task_progress = Signal(object)
+    task_finished = Signal()
+
     def __init__(self, settings_store: SettingsStore, cookies_provider, parent=None):
         super().__init__(parent)
         self._settings_store = settings_store
@@ -35,6 +41,7 @@ class AutoClipperPage(QWidget):
         content = QWidget()
         scroll.setWidget(content)
         layout = QVBoxLayout(content)
+        configure_page_scroll(scroll, content)
         layout.setContentsMargins(32, 28, 32, 30)
         layout.setSpacing(16)
 
@@ -44,20 +51,20 @@ class AutoClipperPage(QWidget):
         title = QLabel("Auto Clippr")
         title.setObjectName("PageTitle")
         layout.addWidget(title)
-        subtitle = QLabel("Find standout moments in an archived stream and turn them into captioned shorts.")
+        subtitle = QLabel("Turn a finished stream into vertical clips with captions and your branding.")
         subtitle.setObjectName("PageSubtitle")
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
 
-        source_card, source = self._section("SOURCE")
+        source_card, source = self._section("1  ·  VIDEO SOURCE")
         self.url_input = QLineEdit()
         self.url_input.setPlaceholderText("https://www.youtube.com/watch?v=...")
         source.addWidget(self._field_label("Stream or VOD URL"))
         source.addWidget(self.url_input)
-        source.addWidget(self._hint("Archived streams are supported in this version. Live capture will be added separately."))
+        source.addWidget(self._hint("Paste a video or finished livestream. For an active stream, use Auto Clipper (Live)."))
         layout.addWidget(source_card)
 
-        edit_card, edit = self._section("CLIP STYLE")
+        edit_card, edit = self._section("2  ·  CLIP SETTINGS")
         row = QHBoxLayout()
         self.count_spin = QSpinBox()
         self.count_spin.setRange(1, 20)
@@ -82,6 +89,38 @@ class AutoClipperPage(QWidget):
             row.addLayout(col, 1)
         edit.addLayout(row)
 
+        model_row = QHBoxLayout()
+        model_col = QVBoxLayout()
+        model_col.setSpacing(6)
+        model_col.addWidget(self._field_label("Speech recognition quality"))
+        self.model_combo = QComboBox()
+        for label, value in (("Small — faster", "small"), ("Medium — recommended", "medium"),
+                             ("Large-v3 — best accuracy", "large-v3")):
+            self.model_combo.addItem(label, value)
+        self.model_combo.setToolTip("This setting is shared with Auto Clipper (Live).")
+        self.model_combo.currentIndexChanged.connect(self._persist_transcription_model)
+        model_col.addWidget(self.model_combo)
+        model_row.addLayout(model_col, 1)
+        model_row.addStretch(2)
+        edit.addLayout(model_row)
+
+        self.advanced_toggle = QToolButton()
+        self.advanced_toggle.setObjectName("AdvancedToggle")
+        self.advanced_toggle.setText("More options  ·  language, facecam, motion & branding")
+        self.advanced_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.advanced_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self.advanced_toggle.setCheckable(True)
+        self.advanced_toggle.toggled.connect(self._set_advanced_options)
+        edit.addWidget(self.advanced_toggle)
+
+        self.advanced_panel = QFrame()
+        self.advanced_panel.setObjectName("CardAlt")
+        self._advanced_layout = QVBoxLayout(self.advanced_panel)
+        self._advanced_layout.setContentsMargins(14, 14, 14, 14)
+        self._advanced_layout.setSpacing(12)
+        edit.addWidget(self.advanced_panel)
+        self.advanced_panel.hide()
+
         lang_row = QHBoxLayout()
         lang_col = QVBoxLayout()
         lang_col.setSpacing(6)
@@ -100,21 +139,29 @@ class AutoClipperPage(QWidget):
         self.other_language.setPlaceholderText("Whisper language code, e.g. te")
         self.other_language.hide()
         lang_row.addWidget(self.other_language, 1)
-        edit.addLayout(lang_row)
+        self._advanced_layout.addLayout(lang_row)
 
         self.facecam_row = QWidget()
         face_layout = QVBoxLayout(self.facecam_row)
         face_layout.setContentsMargins(0, 4, 0, 0)
         face_layout.setSpacing(6)
-        face_layout.addWidget(self._field_label("Facecam position (x, y, width, height; frame fractions)"))
+        face_layout.addWidget(self._field_label("Select the facecam area in the source frame"))
+        accent = self._settings_store.get().accent
+        self.facecam_selector = FacecamSelector(accent=accent)
+        face_layout.addWidget(self.facecam_selector)
+        face_layout.addWidget(self._hint("Drag the box to move it. Drag the lower-right handle to resize, or drag on the frame to draw a new box."))
+        face_layout.addWidget(self._field_label("Position and size (x, y, width, height)"))
         self.facecam_input = QLineEdit("0.75,0.68,0.25,0.32")
+        self.facecam_selector.coordinatesChanged.connect(self.facecam_input.setText)
+        self.facecam_input.textChanged.connect(self.facecam_selector.setCoordinates)
         face_layout.addWidget(self.facecam_input)
-        face_layout.addWidget(self._hint("Adjust these values to match the facecam box in the source video."))
-        edit.addWidget(self.facecam_row)
+        self.stack_layout = StackLayoutControl(accent=accent)
+        face_layout.addWidget(self.stack_layout)
+        self._advanced_layout.addWidget(self.facecam_row)
         self.facecam_row.hide()
 
         self.pan_zoom_check = QCheckBox("Add gentle pan and zoom across selected highlight moments")
-        edit.addWidget(self.pan_zoom_check)
+        self._advanced_layout.addWidget(self.pan_zoom_check)
         layout.addWidget(edit_card)
 
         brand_card, brand = self._section("SHORTS BRANDING")
@@ -133,7 +180,7 @@ class AutoClipperPage(QWidget):
         pick_logo.clicked.connect(self._pick_logo)
         logo_row.addWidget(pick_logo)
         brand.addLayout(logo_row)
-        layout.addWidget(brand_card)
+        self._advanced_layout.addWidget(brand_card)
 
         self.error_label = QLabel("")
         self.error_label.setWordWrap(True)
@@ -199,6 +246,12 @@ class AutoClipperPage(QWidget):
 
     def _on_layout_changed(self, _index: int) -> None:
         self.facecam_row.setVisible(self.layout_combo.currentData() == "stack")
+        if self.layout_combo.currentData() == "stack":
+            self.advanced_toggle.setChecked(True)
+
+    def _set_advanced_options(self, expanded: bool) -> None:
+        self.advanced_panel.setVisible(expanded)
+        self.advanced_toggle.setArrowType(Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow)
 
     def _on_language_changed(self, _index: int) -> None:
         self.other_language.setVisible(self.language_combo.currentData() == "other")
@@ -216,6 +269,9 @@ class AutoClipperPage(QWidget):
             index = combo.findData(value)
             if index >= 0:
                 combo.setCurrentIndex(index)
+        model_index = self.model_combo.findData(settings.transcription_model)
+        if model_index >= 0:
+            self.model_combo.setCurrentIndex(model_index)
         language_index = self.language_combo.findData(settings.caption_language)
         if language_index >= 0:
             self.language_combo.setCurrentIndex(language_index)
@@ -224,6 +280,7 @@ class AutoClipperPage(QWidget):
             self.other_language.setText(settings.caption_language)
         self.pan_zoom_check.setChecked(settings.clip_pan_zoom)
         self.facecam_input.setText(settings.clip_facecam)
+        self.stack_layout.setValue(settings.clip_stack_facecam_percent)
         self.channel_input.setText(settings.clip_channel_name)
         self.subscriber_input.setText(settings.clip_subscriber_text)
         self.logo_input.setText(settings.clip_logo_path)
@@ -279,7 +336,9 @@ class AutoClipperPage(QWidget):
         return {
             "url": url, "count": self.count_spin.value(), "layout": layout,
             "style": self.style_combo.currentData(), "language": language or None,
-            "facecam": facecam, "pan_zoom": self.pan_zoom_check.isChecked(),
+            "model": self.model_combo.currentData(),
+            "facecam": facecam, "stack_facecam_percent": self.stack_layout.value(),
+            "pan_zoom": self.pan_zoom_check.isChecked(),
             "channel_name": self.channel_input.text().strip(),
             "subscriber_text": self.subscriber_input.text().strip(), "logo_path": logo or None,
         }, None
@@ -304,7 +363,10 @@ class AutoClipperPage(QWidget):
         base = Path(chosen) / "StreamCarnia Clips"
         self._output_dir = base / datetime.now().strftime("%Y%m%d_%H%M%S")
         try:
-            cookies_path = self._cookies_provider()
+            try:
+                cookies_path = self._cookies_provider(chosen)
+            except TypeError:
+                cookies_path = self._cookies_provider()
         except Exception as exc:  # noqa: BLE001
             self.error_label.setText(f"Could not use the configured YouTube cookies: {exc}")
             self.error_label.show()
@@ -316,11 +378,14 @@ class AutoClipperPage(QWidget):
             clip_count=options["count"], clip_layout=options["layout"],
             caption_style=options["style"], caption_language=language,
             clip_pan_zoom=options["pan_zoom"], clip_facecam=self.facecam_input.text().strip(),
+            clip_stack_facecam_percent=options["stack_facecam_percent"],
             clip_channel_name=options["channel_name"],
             clip_subscriber_text=options["subscriber_text"],
             clip_logo_path=options["logo_path"] or "",
             clip_output_dir=chosen,
+            transcription_model=options["model"],
         )
+        options["media_root"] = chosen
         self._worker = ClipWorker(options, self._output_dir, self._settings_store.ffmpeg_path)
         self._worker.signals.progress.connect(self._on_progress)
         self._worker.signals.finished.connect(self._on_finished)
@@ -342,6 +407,8 @@ class AutoClipperPage(QWidget):
             eta = event.get("eta_seconds")
             eta_text = "Estimating time remaining" if eta is None else (f"Time remaining: ~{max(1, (eta + 59) // 60)} min" if eta >= 60 else f"Time remaining: ~{eta} sec")
             self.status_label.setText(f"{prefix}{percent}% · {event.get('message', 'Working')} · {eta_text}")
+            self.task_progress.emit({"id": "auto-clippr", "title": "Auto Clippr render",
+                                     "percent": percent, "message": event.get("message", "Rendering clips")})
         else:
             self.status_label.setText(str(event))
 
@@ -405,6 +472,7 @@ class AutoClipperPage(QWidget):
 
     def _set_idle(self) -> None:
         self._worker = None
+        self.task_finished.emit()
         self.start_btn.setEnabled(True)
         self.cancel_btn.hide()
         self.progress.hide()
@@ -424,3 +492,14 @@ class AutoClipperPage(QWidget):
         if self._worker:
             self.status_label.setText("Cancelling clip job…")
             self._worker.cancel()
+
+    def _persist_transcription_model(self, index: int) -> None:
+        model = self.model_combo.itemData(index)
+        if model in {"small", "medium", "large-v3"}:
+            self._settings_store.update(transcription_model=model)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        index = self.model_combo.findData(self._settings_store.get().transcription_model)
+        if index >= 0 and not self.model_combo.hasFocus():
+            self.model_combo.setCurrentIndex(index)

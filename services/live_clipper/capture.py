@@ -88,7 +88,8 @@ def resolve_live_media(url: str) -> tuple[dict, bool, str]:
     import yt_dlp
 
     options = {"quiet": True, "no_warnings": True, "noplaylist": True,
-               "format": "bestvideo+bestaudio/best"}
+               "format": "bestvideo+bestaudio/best",
+               "cachedir": os.environ.get("STREAMCARNIA_CACHE_DIR", False)}
     with yt_dlp.YoutubeDL(options) as ydl:
         info = ydl.extract_info(url, download=False)
     if not isinstance(info, dict):

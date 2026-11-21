@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Callable
 
 from core.paths import asset_path, resource_path
+from core.media_storage import configure_media_storage
 from .capture import Segment
 
 
@@ -110,6 +111,7 @@ class VodHandoff:
             command += ["--lang", str(config["language"])]
         if config.get("facecam"):
             command += ["--facecam", str(config["facecam"])]
+        command += ["--stack-facecam-percent", str(config.get("stack_facecam_percent", 35))]
         if config.get("pan_zoom"):
             command.append("--peak-zoom")
         for key, option in (("channel_name", "--channel-name"), ("subscriber_text", "--subscriber-text"),
@@ -120,6 +122,12 @@ class VodHandoff:
         command += ["--fontsdir", str(fonts)]
         env = os.environ.copy()
         env["PATH"] = str(Path(self.ffmpeg).parent) + os.pathsep + env.get("PATH", "")
+        media_root = config.get("media_root") or self.output_root.parent.parent
+        configure_media_storage(media_root)
+        env.update({key: os.environ[key] for key in (
+            "STREAMCARNIA_MEDIA_ROOT", "STREAMCARNIA_CACHE_DIR", "HF_HOME", "HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE",
+            "TRANSFORMERS_CACHE", "HF_XET_CACHE", "HF_ASSETS_CACHE", "TORCH_HOME", "XDG_CACHE_HOME",
+            "TEMP", "TMP", "TMPDIR")})
         if self.pipeline_runner is not subprocess.run:
             result = self.pipeline_runner(command, cwd=str(pipeline.parent), env=env,
                                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,

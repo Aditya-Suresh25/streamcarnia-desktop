@@ -9,13 +9,14 @@ import uuid
 from pathlib import Path
 
 from core.paths import app_data_dir
+from core.media_storage import configure_media_storage, media_cache_dir
 from .worker import run_worker  # exposed as the packaged worker entry point
 
 
 class LiveProcessController:
     def __init__(self, runtime_root: Path | None = None):
         self._process = None
-        self._runtime_root = Path(runtime_root) if runtime_root else app_data_dir() / "live_clipper" / "runtime"
+        self._runtime_root = Path(runtime_root) if runtime_root else None
         self._runtime = None
         self._event_path = None
         self._event_offset = 0
@@ -29,7 +30,9 @@ class LiveProcessController:
             raise RuntimeError("A live monitor is already running")
         if not config.get("enabled", config.get("live_clipper.enabled", False)):
             raise RuntimeError("Live Auto Clipper is disabled in Settings")
-        runtime = self._runtime_root / str(uuid.uuid4())
+        runtime_root = Path(config.get("runtime_root") or self._runtime_root or
+                            (app_data_dir() / "live_clipper" / "runtime"))
+        runtime = runtime_root / str(uuid.uuid4())
         runtime.mkdir(parents=True, exist_ok=True)
         self._runtime = runtime
         self._event_path = runtime / "events.jsonl"
@@ -47,6 +50,12 @@ class LiveProcessController:
             command = [sys.executable, str(entry), "--run-live-worker", str(config_path)]
         kwargs = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
                   "stderr": subprocess.DEVNULL, "cwd": str(Path(__file__).resolve().parents[2])}
+        media_root = Path(config.get("media_root") or config.get("output_dir") or runtime_root.parent)
+        configure_media_storage(media_root)
+        cache = media_cache_dir(media_root)
+        cache_tmp = cache / "tmp"
+        cache_tmp.mkdir(parents=True, exist_ok=True)
+        kwargs["env"] = os.environ.copy()
         if os.name == "nt":
             kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
         self._process = subprocess.Popen(command, **kwargs)
@@ -91,9 +100,12 @@ class LiveProcessController:
                 self._process.wait(timeout)
             except subprocess.TimeoutExpired:
                 if os.name == "nt":
-                    subprocess.run(["taskkill", "/PID", str(self._process.pid), "/T", "/F"],
-                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
-                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                    try:
+                        subprocess.run(["taskkill", "/PID", str(self._process.pid), "/T", "/F"],
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+                                       timeout=10, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                    except subprocess.TimeoutExpired:
+                        self._process.kill()
                 else:
                     self._process.terminate()
                 try:

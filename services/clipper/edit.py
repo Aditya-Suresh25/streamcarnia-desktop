@@ -5,6 +5,7 @@ Order matters: captions are generated *after* this step, from the edited
 clip, so removing silences here never desyncs them.
 """
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -15,6 +16,7 @@ from common import no_console_kwargs, parse_time, probe, run
 
 VERTICAL = (1080, 1920)
 LANDSCAPE = (1920, 1080)
+SQUARE = (1080, 1080)
 
 
 def detect_silences(path, noise_db=-35, min_dur=0.6):
@@ -76,9 +78,13 @@ def estimate_focus_x(path, every=1.0):
     return xs[len(xs) // 2]
 
 
-def layout_filter(layout, focus_x=0.5, facecam=None):
+def layout_filter(layout, focus_x=0.5, facecam=None, stack_facecam_percent=35):
     """Return a filtergraph fragment from [in] to [vout], and the output size."""
     W, H = VERTICAL
+    if layout == "square":
+        w, h = SQUARE
+        return (f"[in]crop=w='min(iw,ih)':h='min(iw,ih)':x='(iw-ow)/2':y='(ih-oh)/2',"
+                f"scale={w}:{h},setsar=1[vout]", SQUARE)
     if layout == "center":
         fx = min(max(focus_x, 0.0), 1.0)
         return (f"[in]crop=w='min(iw,ih*9/16)':h=ih:x='(iw-ow)*{fx:.3f}':y=0,scale={W}:{H},setsar=1[vout]", VERTICAL)
@@ -90,10 +96,11 @@ def layout_filter(layout, focus_x=0.5, facecam=None):
         if not facecam:
             raise SystemExit("--layout stack needs --facecam x,y,w,h (fractions of the frame, e.g. 0.75,0.7,0.25,0.3)")
         fx, fy, fw, fh = facecam
-        half = H // 2
+        top_height = int(H * min(50, max(20, int(stack_facecam_percent))) / 100)
+        bottom_height = H - top_height
         return (f"[in]split[g][f];"
-                f"[f]crop=w=iw*{fw}:h=ih*{fh}:x=iw*{fx}:y=ih*{fy},scale={W}:{half}:force_original_aspect_ratio=increase,crop={W}:{half}[top];"
-                f"[g]crop=w='min(iw,ih*{W}/{half})':h=ih:x='(iw-ow)/2':y=0,scale={W}:{half}[bot];"
+                f"[f]crop=w=iw*{fw}:h=ih*{fh}:x=iw*{fx}:y=ih,scale={W}:{top_height}:force_original_aspect_ratio=increase,crop={W}:{top_height}[top];"
+                f"[g]crop=w='min(iw,ih*{W}/{bottom_height})':h=ih:x='(iw-ow)/2':y=0,scale={W}:{bottom_height}[bot];"
                 f"[top][bot]vstack,setsar=1[vout]", VERTICAL)
     if layout == "landscape":
         w, h = LANDSCAPE
@@ -103,10 +110,10 @@ def layout_filter(layout, focus_x=0.5, facecam=None):
 
 def edit(src, dst, start=None, end=None, layout="blur", trim_silence=True, track_face=False,
          focus_x=0.5, facecam=None, loudnorm=True, silence_db=-35, min_silence=0.6,
-         peak_zoom=False):
+         peak_zoom=False, stack_facecam_percent=35):
     src, dst = Path(src), Path(dst)
     dst.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory() as td:
+    with tempfile.TemporaryDirectory(dir=os.environ.get("TEMP") or None) as td:
         work = src
         if start is not None and end is not None:  # precise cut (re-encode so it's frame-accurate)
             work = Path(td) / "cut.mp4"
@@ -124,7 +131,7 @@ def edit(src, dst, start=None, end=None, layout="blur", trim_silence=True, track
             if not segs or kept > info["duration"] - 0.4 or kept < 3:
                 segs = None  # nothing worth cutting, or it would gut the clip
 
-        lay, size = layout_filter(layout, focus_x, facecam)
+        lay, size = layout_filter(layout, focus_x, facecam, stack_facecam_percent)
         g = []
         if segs:
             for i, (a, b) in enumerate(segs):
@@ -163,8 +170,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("src"); ap.add_argument("dst")
     ap.add_argument("--start"); ap.add_argument("--end")
-    ap.add_argument("--layout", choices=["blur", "center", "stack", "landscape"], default="blur")
+    ap.add_argument("--layout", choices=["blur", "center", "stack", "landscape", "square"], default="blur")
     ap.add_argument("--facecam", help="x,y,w,h as fractions of the frame (for --layout stack)")
+    ap.add_argument("--stack-facecam-percent", type=int, default=35)
     ap.add_argument("--focus-x", type=float, default=0.5)
     ap.add_argument("--track-face", action="store_true")
     ap.add_argument("--peak-zoom", action="store_true", help="add gentle zoom movement to the selected highlight")
@@ -174,7 +182,7 @@ def main():
     fc = tuple(float(x) for x in a.facecam.split(",")) if a.facecam else None
     r = edit(a.src, a.dst, parse_time(a.start) if a.start else None, parse_time(a.end) if a.end else None,
              a.layout, not a.no_trim, a.track_face, a.focus_x, fc, not a.no_loudnorm,
-             peak_zoom=a.peak_zoom)
+             peak_zoom=a.peak_zoom, stack_facecam_percent=a.stack_facecam_percent)
     print(r)
 
 

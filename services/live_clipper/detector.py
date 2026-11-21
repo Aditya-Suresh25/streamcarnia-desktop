@@ -16,6 +16,7 @@ class Highlight:
     score: float
     audio_score: float
     chat_score: float | None
+    trigger_reason: str
 
 
 def audio_energy_per_second(path: Path, ffmpeg: str) -> np.ndarray:
@@ -35,7 +36,7 @@ def audio_energy_per_second(path: Path, ffmpeg: str) -> np.ndarray:
 
 
 class IncrementalHighlightDetector:
-    def __init__(self, threshold: float = 2.0, cooldown_seconds: int = 120,
+    def __init__(self, threshold: float = 2.0, cooldown_seconds: int = 600,
                  max_clips: int = 10, audio_baseline_seconds: int = 120,
                  chat_baseline_seconds: int = 60):
         self.threshold = float(threshold)
@@ -55,16 +56,20 @@ class IncrementalHighlightDetector:
         for offset, energy in enumerate(energies):
             chat_value = float(chats[offset]) if chats is not None else None
             audio_score = self._zscore(float(energy), self.audio_history)
-            if chats is not None:
-                chat_score = self._zscore(chat_value, self.chat_history)
-                score = 0.55 * audio_score + 0.45 * chat_score
-            else:
-                chat_score = None
-                score = audio_score
+            chat_score = self._zscore(chat_value, self.chat_history) if chats is not None else None
+            # A real spike in either signal should trigger a clip. Averaging
+            # the two used to dilute chat-only bursts and audio-only peaks.
+            reasons = []
+            if audio_score >= self.threshold:
+                reasons.append("audio")
+            if chat_score is not None and chat_score >= self.threshold:
+                reasons.append("chat")
+            score = max(audio_score, chat_score if chat_score is not None else float("-inf"))
             timestamp = start_at + offset
-            if (self.clip_count < self.max_clips and score >= self.threshold and
+            if (self.clip_count < self.max_clips and reasons and
                     (self.last_trigger is None or timestamp - self.last_trigger >= self.cooldown_seconds)):
-                found.append(Highlight(timestamp, float(score), float(audio_score), chat_score))
+                found.append(Highlight(timestamp, float(score), float(audio_score), chat_score,
+                                       "+".join(reasons)))
                 self.last_trigger = timestamp
                 self.clip_count += 1
             self.audio_history.append(float(energy))

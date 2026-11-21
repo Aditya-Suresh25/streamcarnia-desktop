@@ -19,6 +19,8 @@ class LiveClipperConfig:
     clip_length_seconds: int = 60
     threshold: float = 2.0
     layout: str = "blur"
+    facecam: str = "0.75,0.68,0.25,0.32"
+    stack_facecam_percent: int = 35
     caption_style: str = "pop"
     transcription_model: str = "medium"
     approve_before_upload: bool = True
@@ -36,6 +38,16 @@ class LiveClipperConfig:
             raise ValueError("Detection threshold must be between 0.1 and 20")
         if self.layout not in {"blur", "center", "stack"}:
             raise ValueError("Live clips must use a portrait layout: blur, center, or stack")
+        try:
+            facecam = tuple(float(part.strip()) for part in self.facecam.split(","))
+        except (AttributeError, ValueError):
+            raise ValueError("Facecam position must use x,y,width,height fractions") from None
+        if (len(facecam) != 4 or any(not 0 <= value <= 1 for value in facecam)
+                or facecam[2] == 0 or facecam[3] == 0
+                or facecam[0] + facecam[2] > 1 or facecam[1] + facecam[3] > 1):
+            raise ValueError("Facecam position must fit inside the source frame")
+        if not 20 <= int(self.stack_facecam_percent) <= 50:
+            raise ValueError("Stack facecam portion must be between 20% and 50%")
         if self.caption_style not in {"pop", "bounce", "word", "karaoke"}:
             raise ValueError("Unsupported animated caption style")
         if self.transcription_model not in {"small", "medium", "large-v3"}:

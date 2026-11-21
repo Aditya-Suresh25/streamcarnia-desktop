@@ -124,7 +124,7 @@ class SchedulerTests(unittest.TestCase):
             self.assertEqual(body["status"]["publishAt"], when.isoformat())
             self.assertIn("#Shorts", body["snippet"]["description"])
 
-    def test_seventh_clip_is_scheduled_on_the_next_day(self):
+    def test_seventh_clip_stays_in_same_day_at_six_per_hour_pacing(self):
         import tempfile
         from pathlib import Path
         from datetime import timedelta
@@ -136,8 +136,8 @@ class SchedulerTests(unittest.TestCase):
             for index in range(7):
                 job_id = store.create("stream", {"index": index})
                 scheduled.append(scheduler.approve_and_schedule(job_id, "09:00", "21:00"))
-            self.assertEqual(len({slot.date() for slot in scheduled[:6]}), 1)
-            self.assertEqual(scheduled[6].date(), now.date() + timedelta(days=1))
+            self.assertEqual(len({slot.date() for slot in scheduled[:7]}), 1)
+            self.assertEqual(scheduled[6] - scheduled[5], timedelta(minutes=10))
 
     def test_chat_velocity_counts_messages_in_segment_time_window(self):
         request = Mock()
@@ -147,7 +147,7 @@ class SchedulerTests(unittest.TestCase):
         service = Mock()
         service.liveChatMessages.return_value.list.return_value = request
         # Keep the fixed fixture timestamps valid regardless of when the suite runs.
-        chat = LiveChatVelocity(service, "chat-id", max_age_seconds=24 * 60 * 60)
+        chat = LiveChatVelocity(service, "chat-id", max_age_seconds=7 * 24 * 60 * 60)
         chat.poll()
         start = datetime(2026, 11, 18, 10, 0, tzinfo=timezone.utc).timestamp()
         self.assertEqual(chat.counts_for(start, 5).tolist(), [0, 1, 0, 1, 0])

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Burn an .ass caption file into a video (libass via ffmpeg)."""
 import argparse
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -15,7 +16,7 @@ def esc_path(p):
 def burn(video, ass, out, fontsdir=None, channel_name=None, subscriber_text=None, logo=None):
     video, ass, out = Path(video).resolve(), Path(ass).resolve(), Path(out).resolve()
     out.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory() as td:
+    with tempfile.TemporaryDirectory(dir=os.environ.get("TEMP") or None) as td:
         # Copy the subtitle file next to a clean cwd so odd characters in paths can't break the filter.
         shutil.copy(ass, Path(td) / "c.ass")
         vf = "ass=c.ass" + (f":fontsdir='{esc_path(Path(fontsdir).resolve())}'" if fontsdir else "")

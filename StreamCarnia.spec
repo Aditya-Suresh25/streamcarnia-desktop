@@ -29,14 +29,34 @@ if FFMPEG_SRC.is_file():
 datas = [
     (str(ASSETS_DIR), "assets"),
     (str(DESKTOP_DIR / "services" / "clipper"), "services/clipper"),
+    (str(DESKTOP_DIR / "ui" / "studio_qml" / "qml"), "ui/studio_qml/qml"),
 ]
 datas += collect_data_files("yt_dlp")
+# QQuickWidget loads this declarative Studio surface at runtime. Keep the QML
+# sources and Qt's importable Quick/Controls/Multimedia modules in the one-folder
+# distribution; PyInstaller cannot discover QML imports from the Python source.
+datas += collect_data_files("PySide6", includes=[
+    "qml/QtQml/**/*", "qml/QtQuick/**/*", "qml/QtMultimedia/**/*",
+])
 
 hiddenimports = []
 hiddenimports += collect_submodules("yt_dlp.extractor")
 hiddenimports += [
     "yt_dlp.cookies",
     "PySide6.QtSvg",
+    # The desktop Clip Studio embeds Qt video preview widgets.
+    "PySide6.QtMultimedia",
+    "PySide6.QtMultimediaWidgets",
+    "PySide6.QtQml",
+    "PySide6.QtQuick",
+    "PySide6.QtQuickControls2",
+    "PySide6.QtQuickWidgets",
+    "ui.studio_qml.page",
+    "ui.pages.studio_page",
+    "workers.studio_preview_proxy",
+    "services.studio.catalog",
+    "services.studio.media",
+    "services.studio.publishing",
     # Loaded only after the Live Auto Clipper feature flag is enabled.
     "ui.pages.live_auto_clipper_page",
 ]

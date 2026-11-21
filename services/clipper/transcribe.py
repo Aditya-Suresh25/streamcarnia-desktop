@@ -4,11 +4,19 @@
 Run this on the *edited* clip so caption times match the final video.
 """
 import argparse
+from functools import lru_cache
 import json
 import sys
+import time
 
 
-def transcribe(path, model="small", lang=None, device="auto", compute_type=None):
+@lru_cache(maxsize=1)
+def _load_model(model, device, compute_type):
+    from faster_whisper import WhisperModel
+    return WhisperModel(model, device=device, compute_type=compute_type)
+
+
+def transcribe(path, model="small", lang=None, device="auto", compute_type=None, on_progress=None):
     try:
         from faster_whisper import WhisperModel
     except ImportError:
@@ -17,15 +25,32 @@ def transcribe(path, model="small", lang=None, device="auto", compute_type=None)
         compute_type = "int8" if device in ("cpu", "auto") else "float16"
 
     def run_on(selected_device, selected_compute_type):
-        m = WhisperModel(model, device=selected_device, compute_type=selected_compute_type)
+        if on_progress:
+            on_progress(0.0)
+        started = time.monotonic()
+        m = _load_model(model, selected_device, selected_compute_type)
+        if on_progress:
+            on_progress(0.02)
         segs, info = m.transcribe(str(path), word_timestamps=True, vad_filter=True,
                                   language=lang, beam_size=5)
         words = []
+        last_report = 0.0
+        duration = max(float(getattr(info, "duration", 0.0) or 0.0), 0.0)
         for s in segs:
             for w in s.words or []:
                 t = w.word.strip()
                 if t:
                     words.append({"w": t, "s": round(w.start, 3), "e": round(w.end, 3)})
+            now = time.monotonic()
+            if on_progress and (now - last_report >= 1.5 or (duration and s.end >= duration)):
+                last_report = now
+                # Keep model initialization and Whisper's first decode visible;
+                # segment timestamps provide a useful estimate once decoding starts.
+                fraction = 0.03 + 0.97 * min(1.0, float(s.end) / duration) if duration else min(
+                    0.95, 0.03 + (now - started) / max(120.0, now - started + 30.0))
+                on_progress(fraction)
+        if on_progress:
+            on_progress(1.0)
         return {"language": info.language, "text": " ".join(w["w"] for w in words), "words": words}
 
     try:

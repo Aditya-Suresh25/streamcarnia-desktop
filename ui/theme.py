@@ -96,6 +96,14 @@ def build_qss(accent_name: str = "violet") -> str:
         font-weight: 600;
         letter-spacing: 1.6px;
     }}
+    QLabel#NavSection {{
+        color: {text_faint};
+        font-family: {font_display};
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 1.5px;
+        padding: 20px 18px 7px 18px;
+    }}
     #SidebarFooter {{
         color: {text_faint};
         font-size: 10px;
@@ -123,7 +131,82 @@ def build_qss(accent_name: str = "violet") -> str:
         color: {text};
         font-weight: 700;
         border: 1px solid rgba({glow},0.35);
+        border-left: 1px solid rgba({glow},0.35);
     }}
+    QPushButton#NavButton[compact="true"] {{
+        text-align: center;
+        padding: 8px 2px;
+        margin: 2px 9px;
+        font-size: 20px;
+        min-height: 44px;
+    }}
+    QWidget#NavIndicator {{
+        background-color: {accent};
+        border-radius: 2px;
+    }}
+    QFrame#DashboardHero {{
+        background: qlineargradient(x1:0,y1:0,x2:1,y2:1,
+            stop:0 rgba({glow},0.20), stop:1 {card});
+        border: 1px solid rgba({glow},0.34);
+        border-radius: 18px;
+    }}
+    QLabel#DashboardWelcome {{
+        color: {text};
+        font-family: {font_display};
+        font-size: 27px;
+        font-weight: 700;
+        letter-spacing: -0.03em;
+    }}
+    QPushButton#DashboardStat {{
+        background-color: {card};
+        border: 1px solid {border_hair};
+        border-radius: 14px;
+        text-align: left;
+    }}
+    QPushButton#DashboardStat:hover {{
+        background-color: {card_alt};
+        border-color: {accent_dim};
+    }}
+    QLabel#DashboardStatLabel {{ color: {text_dim}; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }}
+    QLabel#DashboardStatValue {{ color: {text}; font-family: {font_display}; font-size: 27px; font-weight: 700; }}
+    QFrame#DashboardStudioPanel {{
+        background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {panel_alt}, stop:1 {card});
+        border: 1px solid {border_hair};
+        border-radius: 16px;
+    }}
+    QPushButton#DashboardAction {{
+        text-align: left;
+        background-color: rgba({glow},0.08);
+        border: 1px solid rgba({glow},0.21);
+        border-radius: 10px;
+        padding: 11px 12px;
+        color: {text};
+        font-weight: 600;
+    }}
+    QPushButton#DashboardAction:hover {{ background-color: rgba({glow},0.15); border-color: {accent_dim}; }}
+    QFrame#DashboardTask {{ background-color: {panel}; border: 1px solid {border_hair}; border-radius: 9px; }}
+    QLabel#DashboardTaskTitle {{ color: {text}; font-weight: 600; }}
+    QLabel#DashboardTaskPercent {{ color: {accent_hover}; font-weight: 700; }}
+    QFrame#DashboardEmpty {{ background-color: {panel}; border: 1px dashed {border}; border-radius: 10px; }}
+    QLabel#DashboardEmptyTitle {{ color: {text}; font-family: {font_display}; font-size: 14px; font-weight: 700; }}
+    QPushButton#DashboardActivity {{ background: transparent; border: none; border-radius: 9px; text-align: left; }}
+    QPushButton#DashboardActivity:hover {{ background-color: {panel_alt}; }}
+    QLabel#DashboardActivityTitle {{ color: {text}; font-size: 13px; font-weight: 600; }}
+    QLabel#DashboardActivityArrow {{ color: {accent_hover}; font-size: 21px; }}
+
+    QTabBar::tab {{
+        background-color: {panel};
+        color: {text_dim};
+        border: 1px solid {border_hair};
+        border-bottom: none;
+        padding: 10px 14px;
+        margin-right: 3px;
+        border-top-left-radius: 8px;
+        border-top-right-radius: 8px;
+    }}
+    QTabBar::tab:selected {{ color: {text}; background-color: {panel_alt}; border-color: {border}; }}
+    QTabBar::tab:hover:!selected {{ color: {text}; background-color: {card_alt}; }}
+    QTabWidget::pane {{ border: 1px solid {border_hair}; border-radius: 10px; top: -1px; }}
 
     /* --- Cards / panels --- */
     QFrame#Card {{
@@ -154,6 +237,15 @@ def build_qss(accent_name: str = "violet") -> str:
         color: {text_dim};
         font-size: 13px;
     }}
+    QLabel#WorkflowHint {{
+        color: {accent_hover};
+        font-size: 12px;
+        font-weight: 600;
+        padding: 9px 12px;
+        background-color: rgba({glow},0.09);
+        border: 1px solid rgba({glow},0.20);
+        border-radius: 8px;
+    }}
     QLabel#SectionHeader {{
         color: {text};
         font-family: {font_display};
@@ -176,7 +268,7 @@ def build_qss(accent_name: str = "violet") -> str:
     }}
 
     /* --- Inputs --- */
-    QLineEdit, QComboBox, QSpinBox {{
+    QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTimeEdit {{
         background-color: {panel};
         border: 1px solid {border_hair};
         border-radius: 10px;
@@ -184,11 +276,12 @@ def build_qss(accent_name: str = "violet") -> str:
         color: {text};
         selection-background-color: {accent_dim};
         font-size: 13px;
+        min-height: 22px;
     }}
-    QLineEdit:hover, QComboBox:hover, QSpinBox:hover {{
+    QLineEdit:hover, QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover, QTimeEdit:hover {{
         border: 1px solid {border};
     }}
-    QLineEdit:focus, QComboBox:focus, QSpinBox:focus {{
+    QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QTimeEdit:focus {{
         border: 1px solid {accent};
         background-color: {panel_alt};
     }}
@@ -204,6 +297,48 @@ def build_qss(accent_name: str = "violet") -> str:
         color: {text};
         outline: none;
         padding: 4px;
+    }}
+    QTableWidget {{
+        background-color: {panel};
+        alternate-background-color: {panel_alt};
+        color: {text};
+        border: 1px solid {border_hair};
+        border-radius: 10px;
+        gridline-color: {border_soft};
+        selection-background-color: rgba({glow},0.22);
+        selection-color: {text};
+        outline: none;
+    }}
+    QTableWidget::item {{
+        padding: 8px;
+        border-bottom: 1px solid {border_soft};
+    }}
+    QDialog#CardDialog {{
+        background-color: {card};
+        color: {text};
+        border: 1px solid {border_hair};
+        border-radius: 16px;
+    }}
+    QLabel#CardTitle {{
+        color: {text};
+        font-family: {font_display};
+        font-size: 18px;
+        font-weight: 700;
+    }}
+    QLabel#PreviewFrame {{
+        background-color: {panel};
+        border: 1px solid {border_hair};
+        border-radius: 12px;
+        color: {text_faint};
+    }}
+    QHeaderView::section {{
+        background-color: {panel_alt};
+        color: {text_dim};
+        border: none;
+        border-bottom: 1px solid {border};
+        padding: 10px 12px;
+        font-size: 11px;
+        font-weight: 700;
     }}
     QCheckBox {{
         color: {text_dim};
@@ -255,6 +390,20 @@ def build_qss(accent_name: str = "violet") -> str:
     QPushButton#GhostButton:hover {{
         color: {text};
         border: 1px solid {accent_dim};
+        background-color: rgba({glow},0.10);
+    }}
+    QToolButton#AdvancedToggle {{
+        background-color: {panel_alt};
+        color: {text_dim};
+        border: 1px solid {border_hair};
+        border-radius: 9px;
+        padding: 11px 13px;
+        text-align: left;
+        font-weight: 600;
+    }}
+    QToolButton#AdvancedToggle:hover, QToolButton#AdvancedToggle:checked {{
+        color: {text};
+        border-color: {accent_dim};
         background-color: rgba({glow},0.10);
     }}
     QPushButton#DangerGhostButton {{
@@ -385,4 +534,11 @@ def build_qss(accent_name: str = "violet") -> str:
         border-radius: 6px;
         padding: 4px 8px;
     }}
+    /* Keyboard focus remains visible on all shared controls. */
+    QPushButton:focus, QToolButton:focus {{
+        border: 2px solid {accent_hover};
+    }}
+    QCheckBox:focus {{ color: {text}; }}
+    QCheckBox:focus::indicator {{ border: 2px solid {accent_hover}; }}
+    QTableWidget:focus, QListWidget:focus {{ border: 1px solid {accent}; }}
     """.format(font_body=FONT_BODY, font_display=FONT_DISPLAY, **c)

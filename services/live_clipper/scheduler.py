@@ -1,31 +1,58 @@
-"""Local-window scheduling and conservative six-uploads-per-day enforcement."""
+"""Local-window scheduling with hourly pacing and YouTube quota safeguards."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from collections import Counter
+from datetime import datetime, timedelta, timezone
+import calendar
+
 from .youtube import YouTubeUploader
 
-DAILY_UPLOAD_LIMIT = 6
+HOURLY_UPLOAD_LIMIT = 6
+# YouTube's default videos.insert quota bucket is 100 uploads per project day.
+DAILY_UPLOAD_LIMIT = 100
 UPLOAD_EARLY_MINUTES = 15
+SLOT_INTERVAL_MINUTES = 10
+
+
+def _youtube_quota_date(value: datetime):
+    """Get the YouTube quota date without requiring a Windows tzdata install."""
+    utc = value.astimezone(timezone.utc)
+    year = utc.year
+    march_calendar = calendar.monthcalendar(year, 3)
+    november_calendar = calendar.monthcalendar(year, 11)
+    march_sundays = [week[calendar.SUNDAY] for week in march_calendar if week[calendar.SUNDAY]]
+    november_sundays = [week[calendar.SUNDAY] for week in november_calendar if week[calendar.SUNDAY]]
+    # US Pacific DST begins at 10:00 UTC on the second Sunday in March and
+    # ends at 09:00 UTC on the first Sunday in November.
+    dst_start = datetime(year, 3, march_sundays[1], 10, tzinfo=timezone.utc)
+    dst_end = datetime(year, 11, november_sundays[0], 9, tzinfo=timezone.utc)
+    offset = timedelta(hours=-7 if dst_start <= utc < dst_end else -8)
+    return (utc + offset).date()
 
 
 def _minutes(value: str) -> int:
     h, m = (int(part) for part in value.split(":"))
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        raise ValueError("Schedule times must use HH:MM")
     return h * 60 + m
 
 
+def _parse_time(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value)
+    return parsed.astimezone() if parsed.tzinfo is None else parsed
+
+
 def schedule_time(now: datetime, start: str, end: str, ordinal: int) -> datetime:
-    """Return one of six evenly spaced slots, with one interval at each end."""
-    if not 1 <= ordinal <= DAILY_UPLOAD_LIMIT:
-        raise ValueError("Daily schedule has six slots")
+    """Return the legacy six-per-day evenly spaced slot for API compatibility."""
+    if not 1 <= ordinal <= 6:
+        raise ValueError("Legacy daily schedule has six sample slots")
     start_minute, end_minute = _minutes(start), _minutes(end)
     if end_minute <= start_minute:
         raise ValueError("Schedule end must be later than its start on the same day")
-    slot_minute = start_minute + (end_minute - start_minute) * ordinal / (DAILY_UPLOAD_LIMIT + 1)
-    hour = int(slot_minute // 60)
-    minute = int(round(slot_minute % 60))
+    slot_minute = start_minute + (end_minute - start_minute) * ordinal / 7
+    hour, minute = divmod(round(slot_minute), 60)
     if minute == 60:
-        hour += 1
-        minute = 0
+        hour, minute = hour + 1, 0
     return now.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
 
@@ -37,27 +64,42 @@ class UploadScheduler:
 
     def approve_and_schedule(self, job_id: str, start: str, end: str) -> datetime:
         jobs = self.store.list_jobs()
-        target = next((item for item in jobs if item["id"] == job_id), None)
-        if target is None:
+        if not any(item["id"] == job_id for item in jobs):
             raise KeyError(job_id)
         current = self.now_provider()
-        existing = []
+        start_minute, end_minute = _minutes(start), _minutes(end)
+        if end_minute <= start_minute:
+            raise ValueError("Schedule end must be later than its start on the same day")
+
+        scheduled = []
         for job in jobs:
             value = job["data"].get("scheduled_at")
             if value:
                 try:
-                    existing.append(datetime.fromisoformat(value).astimezone(current.tzinfo))
-                except ValueError:
+                    scheduled.append(_parse_time(value).astimezone(current.tzinfo))
+                except (ValueError, TypeError):
                     continue
+        scheduled_hours = Counter((item.date(), item.hour) for item in scheduled)
+        scheduled_days = Counter(item.date() for item in scheduled)
+        existing_times = set(scheduled)
+
         when = None
         for day_offset in range(366):
-            day = (current + timedelta(days=day_offset)).replace(hour=0, minute=0, second=0, microsecond=0)
-            used = {item.hour * 60 + item.minute for item in existing if item.date() == day.date()}
-            for ordinal in range(1, DAILY_UPLOAD_LIMIT + 1):
-                slot = schedule_time(day, start, end, ordinal)
-                if slot > current + timedelta(minutes=UPLOAD_EARLY_MINUTES) and slot.hour * 60 + slot.minute not in used:
-                    when = slot
-                    break
+            day = (current + timedelta(days=day_offset)).replace(
+                hour=0, minute=0, second=0, microsecond=0)
+            if scheduled_days[day.date()] >= DAILY_UPLOAD_LIMIT:
+                continue
+            for minute_of_day in range(start_minute, end_minute, SLOT_INTERVAL_MINUTES):
+                hour, minute = divmod(minute_of_day, 60)
+                slot = day.replace(hour=hour, minute=minute)
+                if slot <= current + timedelta(minutes=UPLOAD_EARLY_MINUTES):
+                    continue
+                if slot in existing_times:
+                    continue
+                if scheduled_hours[(slot.date(), slot.hour)] >= HOURLY_UPLOAD_LIMIT:
+                    continue
+                when = slot
+                break
             if when:
                 break
         if when is None:
@@ -66,25 +108,56 @@ class UploadScheduler:
         return when
 
     def upload_due(self, job_id: str) -> str | None:
-        job = next((item for item in self.store.list_jobs() if item["id"] == job_id), None)
+        return self._upload(job_id, require_due=True)
+
+    def upload_now(self, job_id: str) -> str | None:
+        """Upload a just-approved Studio job now, still honoring quota safeguards."""
+        return self._upload(job_id, require_due=False)
+
+    def _upload(self, job_id: str, require_due: bool) -> str | None:
+        jobs = self.store.list_jobs()
+        job = next((item for item in jobs if item["id"] == job_id), None)
         if job is None:
             raise KeyError(job_id)
         if job["state"] != "scheduled" or not job["data"].get("approved"):
             raise RuntimeError("Clip is not approved and scheduled")
         now = self.now_provider()
-        publish_at = datetime.fromisoformat(job["data"]["scheduled_at"])
+        publish_at = _parse_time(job["data"]["scheduled_at"])
         due = publish_at - timedelta(minutes=UPLOAD_EARLY_MINUTES)
-        if now < due:
+        if require_due and now < due:
             return None
         if self.uploader is None:
             raise RuntimeError("YouTube OAuth is not configured")
-        uploaded_at_day = now.date()
-        uploads_today = sum(1 for item in self.store.list_jobs()
-                            if item["state"] == "uploaded" and item["data"].get("uploaded_at") and
-                            datetime.fromisoformat(item["data"]["uploaded_at"]).astimezone(now.tzinfo).date() == uploaded_at_day)
-        if uploads_today >= DAILY_UPLOAD_LIMIT:
-            raise RuntimeError("The six-upload daily upload limit has been reached")
-        video_id = self.uploader.upload(job["data"]["file_path"], job["data"]["metadata"],
-                                        publish_at.isoformat())
+
+        uploaded = []
+        for item in jobs:
+            value = item["data"].get("uploaded_at")
+            if item["state"] == "uploaded" and value:
+                try:
+                    uploaded.append(_parse_time(value))
+                except (ValueError, TypeError):
+                    continue
+        local_hour = sum(1 for value in uploaded if value.astimezone(now.tzinfo).replace(
+            minute=0, second=0, microsecond=0) == now.replace(minute=0, second=0, microsecond=0))
+        quota_date = _youtube_quota_date(now)
+        quota_day = sum(1 for value in uploaded if _youtube_quota_date(value) == quota_date)
+        if local_hour >= HOURLY_UPLOAD_LIMIT:
+            raise RuntimeError("The six-upload-per-hour limit has been reached")
+        if quota_day >= DAILY_UPLOAD_LIMIT:
+            raise RuntimeError("YouTube's 100-upload daily quota safeguard has been reached")
+
+        # Persist the in-flight state before making the non-idempotent insert.
+        # If the process dies after Google accepts the upload but before the ID
+        # is saved, surface an explicit unknown state instead of retrying and
+        # silently creating a duplicate.
+        self.store.update(job_id, "uploading", {"upload_started_at": now.isoformat()})
+        try:
+            video_id = self.uploader.upload(job["data"]["file_path"], job["data"]["metadata"],
+                                            publish_at.isoformat())
+        except Exception as exc:
+            status_code = getattr(getattr(exc, "resp", None), "status", None)
+            state = "failed" if status_code and 400 <= status_code < 500 else "unknown"
+            self.store.update(job_id, state, error=str(exc)[:500])
+            raise
         self.store.update(job_id, "uploaded", {"youtube_video_id": video_id, "uploaded_at": now.isoformat()})
         return video_id

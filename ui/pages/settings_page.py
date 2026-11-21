@@ -9,7 +9,7 @@ import yt_dlp
 from PySide6.QtCore import Signal
 from PySide6.QtCore import QThreadPool
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
+    QBoxLayout, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
     QScrollArea, QSpinBox, QVBoxLayout, QWidget,
 )
 
@@ -24,7 +24,8 @@ from services.live_clipper.secrets import CredentialVault
 from ui.effects import apply_card_shadow
 from ui.theme import ACCENT_PRESETS, palette
 from ui.widgets.buttons import GhostButton, PrimaryButton
-from workers.oauth_worker import YouTubeOAuthWorker
+from ui.widgets.page_layout import configure_page_scroll
+from workers.oauth_worker import YouTubeDisconnectWorker, YouTubeOAuthWorker
 
 APP_VERSION = "1.0.1"
 COPYRIGHT_LINE = "\u00a9 Aditya Suresh. All rights reserved."
@@ -77,6 +78,7 @@ class SettingsPage(QWidget):
         self._live_settings = LiveClipperSettings()
         self._oauth_pool = QThreadPool(self)
         self._eyebrow_marks: list[QFrame] = []
+        self._compact_rows: list[QHBoxLayout] = []
 
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
@@ -87,6 +89,7 @@ class SettingsPage(QWidget):
         content = QWidget()
         scroll.setWidget(content)
         layout = QVBoxLayout(content)
+        configure_page_scroll(scroll, content)
         layout.setContentsMargins(36, 32, 36, 32)
         layout.setSpacing(20)
 
@@ -108,6 +111,7 @@ class SettingsPage(QWidget):
 
         self._load_from_settings()
         self._apply_mark_color()
+        self._update_compact_rows()
 
     # --- sections ----------------------------------------------------
 
@@ -118,6 +122,7 @@ class SettingsPage(QWidget):
         layout.addWidget(_field_label("Download folder"))
         dir_row = QHBoxLayout()
         dir_row.setSpacing(8)
+        self._compact_rows.append(dir_row)
         self.dir_input = QLineEdit()
         dir_row.addWidget(self.dir_input, 1)
         browse_btn = GhostButton("Browse...")
@@ -240,6 +245,7 @@ class SettingsPage(QWidget):
         layout.addWidget(_divider())
         layout.addWidget(_field_label("Gemini API key"))
         key_row = QHBoxLayout()
+        self._compact_rows.append(key_row)
         self.gemini_key_input = QLineEdit()
         self.gemini_key_input.setEchoMode(QLineEdit.Password)
         self.gemini_key_input.setPlaceholderText("Stored in the Windows credential store")
@@ -256,6 +262,7 @@ class SettingsPage(QWidget):
         layout.addWidget(self.live_credential_status)
         layout.addWidget(_field_label("Google OAuth client secrets JSON"))
         oauth_row = QHBoxLayout()
+        self._compact_rows.append(oauth_row)
         self.oauth_file_input = QLineEdit()
         self.oauth_file_input.setPlaceholderText("Choose your desktop OAuth client file")
         oauth_row.addWidget(self.oauth_file_input, 1)
@@ -265,6 +272,9 @@ class SettingsPage(QWidget):
         self.connect_youtube_btn = GhostButton("Connect YouTube")
         self.connect_youtube_btn.clicked.connect(self._connect_youtube)
         oauth_row.addWidget(self.connect_youtube_btn)
+        self.disconnect_youtube_btn = GhostButton("Disconnect")
+        self.disconnect_youtube_btn.clicked.connect(self._disconnect_youtube)
+        oauth_row.addWidget(self.disconnect_youtube_btn)
         layout.addLayout(oauth_row)
         self.oauth_status = QLabel("OAuth tokens are stored in the Windows credential store.")
         self.oauth_status.setObjectName("Faint")
@@ -325,6 +335,19 @@ class SettingsPage(QWidget):
 
     # --- behavior ------------------------------------------------------
 
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._update_compact_rows()
+
+    def _update_compact_rows(self) -> None:
+        """Stack dense credential/path rows before their controls become cramped."""
+        if not hasattr(self, "_compact_rows"):
+            return
+        direction = (QBoxLayout.Direction.TopToBottom if self.width() < 1060
+                     else QBoxLayout.Direction.LeftToRight)
+        for row in self._compact_rows:
+            row.setDirection(direction)
+
     def _pick_download_dir(self) -> None:
         current = self.dir_input.text() or str(self._settings_store.get().download_dir)
         path = QFileDialog.getExistingDirectory(self, "Choose download folder", current)
@@ -371,9 +394,32 @@ class SettingsPage(QWidget):
         worker.signals.failed.connect(self._oauth_failed)
         self._oauth_pool.start(worker)
 
-    def _oauth_connected(self) -> None:
+    def _oauth_connected(self, channel: dict | None = None) -> None:
         self.connect_youtube_btn.setEnabled(True)
-        self.oauth_status.setText("YouTube connected. OAuth tokens are stored securely.")
+        channel_name = (channel or {}).get("title")
+        message = f"Connected channel: {channel_name}." if channel_name else "YouTube connected."
+        self.oauth_status.setText(message + " OAuth tokens are stored securely.")
+
+    def _disconnect_youtube(self) -> None:
+        answer = QMessageBox.question(self, "Disconnect YouTube?",
+            "Revoke StreamCarnia's YouTube authorization and remove the stored token? Existing scheduled videos on YouTube are not affected.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.disconnect_youtube_btn.setEnabled(False)
+        worker = YouTubeDisconnectWorker()
+        worker.signals.completed.connect(self._youtube_disconnected)
+        worker.signals.failed.connect(self._youtube_disconnect_failed)
+        self._oauth_pool.start(worker)
+
+    def _youtube_disconnected(self, _value=None) -> None:
+        self.disconnect_youtube_btn.setEnabled(True)
+        self.oauth_status.setText("YouTube disconnected. The stored authorization was removed.")
+
+    def _youtube_disconnect_failed(self, error: str) -> None:
+        self.disconnect_youtube_btn.setEnabled(True)
+        self.oauth_status.setText(f"Could not disconnect YouTube: {error}")
 
     def _oauth_failed(self, error: str) -> None:
         self.connect_youtube_btn.setEnabled(True)

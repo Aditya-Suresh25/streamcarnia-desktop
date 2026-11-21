@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import logging
 import shutil
-import tempfile
 from pathlib import Path
 from threading import Event
 
@@ -26,6 +25,7 @@ from backend.services import ytdlp_service
 from backend.services.history_store import HistoryStore
 
 from workers.signals import DownloadSignals
+from core.media_storage import configure_media_storage
 
 logger = logging.getLogger("download_worker")
 
@@ -58,11 +58,7 @@ class DownloadWorker(QRunnable):
         self.cancel_event.set()
 
     def _job_dir(self) -> Path:
-        # Staged in the OS temp directory -- never inside the user's chosen
-        # download folder -- so no visible ".streamcarnia_incomplete"
-        # folder ever appears next to their files. Cleaned up on both
-        # success and failure/cancellation.
-        return Path(tempfile.gettempdir()) / "StreamCarniaDesktop" / "incomplete" / self.item.id
+        return Path(self.download_dir).expanduser() / ".streamcarnia" / "incomplete" / self.item.id
 
     def _emit(self) -> None:
         # The main window (and its Qt signal objects) may already be torn
@@ -91,6 +87,9 @@ class DownloadWorker(QRunnable):
 
         job_dir = self._job_dir()
         job_dir.mkdir(parents=True, exist_ok=True)
+        configure_media_storage(self.download_dir)
+        import tempfile
+        tempfile.tempdir = None
 
         item.stage = DownloadStage.DOWNLOADING_VIDEO
         self._emit()

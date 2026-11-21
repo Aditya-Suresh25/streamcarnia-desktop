@@ -17,6 +17,7 @@ from ui.effects import apply_card_shadow
 from ui.widgets.buttons import PrimaryButton
 from ui.widgets.quality_list import QualityList
 from ui.widgets.video_info_card import VideoInfoCard
+from ui.widgets.page_layout import configure_page_scroll
 from workers.analyze_worker import AnalyzeWorker
 
 
@@ -39,21 +40,27 @@ class HomePage(QWidget):
         content = QWidget()
         scroll.setWidget(content)
         layout = QVBoxLayout(content)
+        configure_page_scroll(scroll, content)
         layout.setContentsMargins(32, 28, 32, 28)
         layout.setSpacing(18)
         layout.setAlignment(layout.alignment())
 
-        eyebrow = QLabel("STREAMCARNIA")
+        eyebrow = QLabel("DOWNLOAD STREAM")
         eyebrow.setObjectName("Eyebrow")
         layout.addWidget(eyebrow)
 
-        title = QLabel("Don't let good streams fade with time..")
+        title = QLabel("Save a stream to your device")
         title.setObjectName("PageTitle")
         layout.addWidget(title)
 
-        subtitle = QLabel("Paste a link below to get started 👇")
+        subtitle = QLabel("Download a video or finished livestream in the quality you choose.")
         subtitle.setObjectName("PageSubtitle")
         layout.addWidget(subtitle)
+
+        workflow = QLabel("1  Paste a link     ·     2  Choose quality     ·     3  Pick a save location")
+        workflow.setObjectName("WorkflowHint")
+        workflow.setWordWrap(True)
+        layout.addWidget(workflow)
 
         input_card = QFrame()
         input_card.setObjectName("Card")
@@ -62,11 +69,13 @@ class HomePage(QWidget):
         input_layout.setSpacing(10)
 
         self.url_input = QLineEdit()
-        self.url_input.setPlaceholderText("https://www.youtube.com/watch?v=...")
+        self.url_input.setPlaceholderText("Paste a YouTube video or finished livestream URL")
+        self.url_input.setMinimumHeight(46)
         self.url_input.returnPressed.connect(self._on_analyze_clicked)
         input_layout.addWidget(self.url_input, 1)
 
-        self.analyze_btn = PrimaryButton("Analyze")
+        self.analyze_btn = PrimaryButton("Check quality")
+        self.analyze_btn.setMinimumHeight(46)
         self.analyze_btn.clicked.connect(self._on_analyze_clicked)
         input_layout.addWidget(self.analyze_btn)
 
@@ -88,12 +97,16 @@ class HomePage(QWidget):
         quality_layout.setContentsMargins(14, 14, 14, 14)
         quality_layout.setSpacing(10)
 
-        q_header = QLabel("QUALITY")
+        q_header = QLabel("CHOOSE DOWNLOAD QUALITY")
         q_header.setObjectName("Eyebrow")
         quality_layout.addWidget(q_header)
 
         self.quality_list = QualityList()
         quality_layout.addWidget(self.quality_list)
+        quality_help = QLabel("Select a video quality, choose a file format, then start the download.")
+        quality_help.setObjectName("Faint")
+        quality_help.setWordWrap(True)
+        quality_layout.addWidget(quality_help)
 
         options_row = QHBoxLayout()
         options_row.addWidget(QLabel("Container:"))
@@ -124,7 +137,7 @@ class HomePage(QWidget):
             return
         self.error_label.hide()
         self.analyze_btn.setEnabled(False)
-        self.analyze_btn.setText("Analyzing...")
+        self.analyze_btn.setText("Checking quality…")
         self.video_info.clear()
         self.quality_section.hide()
 
@@ -145,7 +158,7 @@ class HomePage(QWidget):
 
     def _on_analyze_succeeded(self, info: AnalyzeResponse) -> None:
         self.analyze_btn.setEnabled(True)
-        self.analyze_btn.setText("Analyze")
+        self.analyze_btn.setText("Check quality")
         self._current_info = info
         self.video_info.set_info(info)
         self.quality_list.set_options(info.formats)
@@ -153,7 +166,7 @@ class HomePage(QWidget):
 
     def _on_analyze_failed(self, message: str) -> None:
         self.analyze_btn.setEnabled(True)
-        self.analyze_btn.setText("Analyze")
+        self.analyze_btn.setText("Check quality")
         self.error_label.setText(message)
         self.error_label.show()
 

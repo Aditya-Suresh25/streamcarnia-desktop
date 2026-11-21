@@ -41,10 +41,13 @@ class DesktopSettings:
     caption_language: str = ""
     clip_pan_zoom: bool = False
     clip_facecam: str = "0.75,0.68,0.25,0.32"
+    clip_stack_facecam_percent: int = 35
     clip_channel_name: str = ""
     clip_subscriber_text: str = ""
     clip_logo_path: str = ""
     clip_output_dir: str = ""
+    transcription_model: str = "medium"
+    studio_workspace_dir: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)

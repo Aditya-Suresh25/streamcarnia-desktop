@@ -67,7 +67,7 @@ class ReliabilityTests(unittest.TestCase):
             ok_edit = {"path": str(edited), "width": 1920, "height": 1080}
             edit = SimpleNamespace(edit=unittest.mock.Mock(side_effect=[ok_edit, RuntimeError("synthetic edit error"), ok_edit]))
             burn = SimpleNamespace(burn=lambda _src, _ass, dest, *_args: Path(dest).write_bytes(b"mp4"))
-            transcribe_module = SimpleNamespace(transcribe=lambda *_args: {"text": "Hi!", "words": [{"s": 0.0, "e": 0.5, "w": "Hi!"}]})
+            transcribe_module = SimpleNamespace(transcribe=lambda *_args, **_kwargs: {"text": "Hi!", "words": [{"s": 0.0, "e": 0.5, "w": "Hi!"}]})
             argv = ["pipeline.py", str(source), "--out", str(out), "--ranges", "0:00-0:10,0:10-0:20,0:20-0:30"]
             with patch.object(sys, "argv", argv), patch.object(pipeline, "edit_mod", edit), \
                     patch.object(pipeline, "burn_mod", burn), patch.object(pipeline, "probe", return_value={"duration": 10}), \
@@ -94,7 +94,7 @@ class ReliabilityTests(unittest.TestCase):
             }))
             burn = SimpleNamespace(burn=lambda _src, _ass, dest, *_args: Path(dest).write_bytes(b"mp4"))
             tr = {"text": "नमस्ते", "words": [{"s": 0.0, "e": 0.5, "w": "नमस्ते"}]}
-            transcribe_module = SimpleNamespace(transcribe=lambda *_args: tr)
+            transcribe_module = SimpleNamespace(transcribe=lambda *_args, **_kwargs: tr)
             romanizer = unittest.mock.Mock(side_effect=[RuntimeError("synthetic model error"),
                 [{"s": 0.0, "e": 0.5, "w": "namaste"}]])
             argv = ["pipeline.py", str(source), "--out", str(out), "--ranges", "0:00-0:10,0:10-0:20"]

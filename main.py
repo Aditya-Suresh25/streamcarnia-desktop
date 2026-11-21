@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
+import sqlite3
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -81,7 +83,9 @@ APP_COPYRIGHT = "\u00a9 Aditya Suresh"
 
 
 def _setup_logging() -> None:
-    log_dir = app_data_dir() / "logs"
+    from core.settings_store import settings_store
+    media_root = Path(settings_store.get().clip_output_dir or settings_store.get().download_dir).expanduser()
+    log_dir = media_root / ".streamcarnia" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,
@@ -115,7 +119,18 @@ def main() -> int:
     _setup_logging()
     logger = logging.getLogger("main")
 
-    history_db_path = app_data_dir() / "history.db"
+    media_root = Path(settings_store.get().clip_output_dir or settings_store.get().download_dir).expanduser()
+    media_state = media_root / ".streamcarnia"
+    media_state.mkdir(parents=True, exist_ok=True)
+    history_db_path = media_state / "history.db"
+    legacy_history = app_data_dir() / "history.db"
+    if not history_db_path.exists() and legacy_history.exists():
+        try:
+            with sqlite3.connect(legacy_history) as source, sqlite3.connect(history_db_path) as target:
+                source.backup(target)
+        except sqlite3.Error:
+            history_db_path.unlink(missing_ok=True)
+            shutil.copy2(legacy_history, history_db_path)
     history_store = HistoryStore(str(history_db_path))
 
     logger.info(
